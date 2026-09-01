@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
 import { LogEntry } from '../types';
-import { ShieldCheck, Search, Download, Filter, Clock, User, ArrowLeft, Loader2 } from 'lucide-react';
+import { ShieldCheck, Search, Download, ArrowLeft, Clock, User, Filter, AlertCircle } from 'lucide-react';
 
 interface AuditLogsScreenProps {
   onBack: () => void;
@@ -71,139 +71,132 @@ const AuditLogsScreen: React.FC<AuditLogsScreenProps> = ({ onBack }) => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      {/* Topbar */}
-      <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md px-6 py-4 flex items-center justify-between sticky top-0 z-20">
+    <div className="min-h-screen bg-[#EDF1F6] text-[#0F2A52] p-4 sm:p-8 font-sans">
+      {/* Header */}
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4 max-w-[2000px] mx-auto bg-white p-6 rounded-3xl border border-[#E5E7EB] shadow-xs">
         <div className="flex items-center gap-4">
           <button
             onClick={onBack}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+            className="p-2.5 rounded-2xl bg-[#F8FAFC] hover:bg-[#DBEAFE] text-[#0F2A52] border border-[#E5E7EB] transition-all"
+            title="Voltar ao Painel Geral"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 flex items-center justify-center">
-              <ShieldCheck className="w-5 h-5" />
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#F4901E]">SENAI • AUDITORIA & LOGS</span>
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                Rastreabilidade Ativa
+              </span>
             </div>
-            <div>
-              <h1 className="text-lg font-bold text-white tracking-tight">Logs de Auditoria e Segurança</h1>
-              <p className="text-xs text-slate-400">Rastreabilidade completa de ações administrativas</p>
-            </div>
+            <h1 className="text-2xl sm:text-3xl font-black uppercase tracking-tight text-[#0F2A52] mt-1">
+              Registro de Atividades & Auditoria
+            </h1>
           </div>
         </div>
 
         <button
           onClick={exportarCSV}
           disabled={logsFiltrados.length === 0}
-          className="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-sm font-medium flex items-center gap-2 transition-all disabled:opacity-50"
+          className="px-4 py-2.5 rounded-xl bg-[#0F2A52] hover:bg-[#1D4E8C] text-white text-xs font-black uppercase tracking-wider flex items-center gap-2 transition-all disabled:opacity-50 shadow-md"
         >
-          <Download className="w-4 h-4 text-red-400" />
-          Exportar CSV
+          <Download className="w-4 h-4 text-[#F4901E]" />
+          <span>Exportar Relatório CSV</span>
         </button>
       </header>
 
-      {/* Main Content */}
-      <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-6">
-        
-        {/* Controles de Filtro */}
-        <div className="flex flex-col sm:flex-row gap-4 justify-between items-center bg-slate-900/80 p-4 rounded-2xl border border-slate-800 backdrop-blur-sm">
-          <div className="relative w-full sm:w-80">
-            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+      {/* Main Container */}
+      <main className="max-w-[2000px] mx-auto bg-white p-6 sm:p-8 rounded-3xl border border-[#E5E7EB] shadow-lg space-y-6">
+        {/* Filtros e Busca */}
+        <div className="flex flex-col sm:flex-row gap-4 justify-between items-stretch sm:items-center">
+          <div className="relative flex-1">
+            <Search className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-[#94A3B8]" />
             <input
               type="text"
-              placeholder="Buscar por usuário ou ID..."
+              placeholder="Buscar por e-mail, nome de usuário ou ID de entidade..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2 bg-slate-950/60 border border-slate-800 rounded-xl text-white placeholder-slate-500 text-sm focus:outline-none focus:border-red-500"
+              className="w-full pl-10 pr-4 py-3 bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
             />
           </div>
 
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <Filter className="w-4 h-4 text-slate-500 shrink-0" />
+          <div className="flex items-center gap-2">
+            <Filter className="w-4 h-4 text-[#6B7280]" />
             <select
               value={filterAction}
               onChange={(e) => setFilterAction(e.target.value)}
-              className="w-full sm:w-auto px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm focus:outline-none focus:border-red-500"
+              className="bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl px-3 py-3 text-xs outline-none focus:border-[#F4901E] text-[#0F2A52] font-semibold"
             >
-              <option value="TODOS">Todas as ações</option>
-              <option value="IMPORTAR_CSV">IMPORTAR_CSV</option>
-              <option value="CRIAR_AULA">CRIAR_AULA</option>
-              <option value="EDITAR_AULA">EDITAR_AULA</option>
-              <option value="EXCLUIR_AULA">EXCLUIR_AULA</option>
-              <option value="UPLOAD_MIDIA">UPLOAD_MIDIA</option>
-              <option value="EXCLUIR_MIDIA">EXCLUIR_MIDIA</option>
-              <option value="APROVAR_AGENDAMENTO">APROVAR_AGENDAMENTO</option>
-              <option value="REJEITAR_AGENDAMENTO">REJEITAR_AGENDAMENTO</option>
-              <option value="CRIAR_AMBIENTE">CRIAR_AMBIENTE</option>
+              <option value="TODOS">Todas as Ações</option>
+              <option value="CRIAR_AULA">Criação de Aula</option>
+              <option value="EDITAR_AULA">Edição de Aula</option>
+              <option value="EXCLUIR_AULA">Exclusão de Aula</option>
+              <option value="APROVAR_AGENDAMENTO">Aprovação de Sala</option>
+              <option value="REJEITAR_AGENDAMENTO">Recusa de Sala</option>
+              <option value="ADICIONAR_MIDIA">Upload de Mídia</option>
+              <option value="EXCLUIR_MIDIA">Exclusão de Mídia</option>
+              <option value="CRIAR_USUARIO">Criação de Usuário</option>
             </select>
           </div>
         </div>
 
         {/* Tabela de Logs */}
-        {loading ? (
-          <div className="py-20 flex flex-col items-center justify-center text-slate-400 gap-3">
-            <Loader2 className="w-8 h-8 animate-spin text-red-500" />
-            <p className="text-sm">Carregando histórico de auditoria...</p>
-          </div>
-        ) : logsFiltrados.length === 0 ? (
-          <div className="py-16 text-center text-slate-500 bg-slate-900/40 rounded-2xl border border-slate-800/80 p-8">
-            Nenhum registro de log encontrado para os filtros selecionados.
-          </div>
-        ) : (
-          <div className="bg-slate-900/90 rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm text-slate-300">
-                <thead className="bg-slate-950/80 text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-800">
-                  <tr>
-                    <th className="py-3.5 px-6">Data / Hora</th>
-                    <th className="py-3.5 px-6">Usuário (Ator)</th>
-                    <th className="py-3.5 px-6">Ação</th>
-                    <th className="py-3.5 px-6">Entidade</th>
-                    <th className="py-3.5 px-6">Identificador</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  {logsFiltrados.map((log) => {
-                    const dataHora = log.timestamp?.toDate ? log.timestamp.toDate().toLocaleString('pt-BR') : 'Agora';
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="border-b border-[#E5E7EB] text-[10px] font-black uppercase text-[#6B7280] tracking-wider">
+                <th className="py-3 px-4">Data / Hora</th>
+                <th className="py-3 px-4">Usuário Responsável</th>
+                <th className="py-3 px-4">Ação Realizada</th>
+                <th className="py-3 px-4">Entidade</th>
+                <th className="py-3 px-4">Detalhes / ID</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#F1F5F9] text-xs">
+              {logsFiltrados.map((log) => {
+                const dataHora = log.timestamp?.toDate 
+                  ? log.timestamp.toDate().toLocaleString('pt-BR') 
+                  : (typeof log.timestamp === 'string' ? log.timestamp : 'Agora');
 
-                    return (
-                      <tr key={log.id} className="hover:bg-slate-800/40 transition-colors">
-                        <td className="py-4 px-6 font-mono text-xs text-slate-400 whitespace-nowrap">
-                          <div className="flex items-center gap-2">
-                            <Clock className="w-3.5 h-3.5 text-slate-500" />
-                            {dataHora}
-                          </div>
-                        </td>
-                        <td className="py-4 px-6 font-medium text-white">
-                          <div className="flex items-center gap-2">
-                            <User className="w-3.5 h-3.5 text-slate-400" />
-                            <span>{log.actorNome || 'Sistema'}</span>
-                            <span className="text-xs text-slate-500 font-normal">({log.actorEmail})</span>
-                          </div>
-                        </td>
-                        <td className="py-4 px-6">
-                          <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wider ${
-                            log.acao.startsWith('CRIAR') || log.acao.startsWith('APROVAR') ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
-                            log.acao.startsWith('EXCLUIR') || log.acao.startsWith('REJEITAR') ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
-                            'bg-blue-500/10 text-blue-400 border border-blue-500/20'
-                          }`}>
-                            {log.acao}
-                          </span>
-                        </td>
-                        <td className="py-4 px-6 font-mono text-xs text-slate-300 uppercase">
-                          {log.entidadeTipo}
-                        </td>
-                        <td className="py-4 px-6 font-mono text-xs text-slate-400 truncate max-w-xs">
-                          {log.entidadeId}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                return (
+                  <tr key={log.id} className="hover:bg-[#F8FAFC] transition-colors">
+                    <td className="py-3 px-4 font-mono text-[11px] text-[#0F2A52]">
+                      <div className="flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-[#6B7280]" />
+                        <span>{dataHora}</span>
+                      </div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="font-bold text-[#0F2A52]">{log.actorNome || log.actorEmail}</div>
+                      <div className="text-[10px] text-[#6B7280] font-mono">{log.actorEmail}</div>
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className={`px-2 py-0.5 rounded text-[9px] font-black uppercase tracking-wider ${
+                        log.acao.includes('CRIAR') || log.acao.includes('APROVAR') ? 'bg-emerald-100 text-emerald-800' :
+                        log.acao.includes('EXCLUIR') || log.acao.includes('REJEITAR') ? 'bg-red-100 text-red-800' :
+                        'bg-blue-100 text-blue-800'
+                      }`}>
+                        {log.acao}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4 font-semibold text-[#0F2A52]">
+                      {log.entidadeTipo}
+                    </td>
+                    <td className="py-3 px-4 text-[#64748B] font-mono text-[11px] max-w-xs truncate">
+                      {log.entidadeId || '—'}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+
+          {logsFiltrados.length === 0 && (
+            <div className="py-16 text-center text-xs font-bold text-[#6B7280]">
+              {loading ? 'Carregando logs...' : 'Nenhum registro de auditoria encontrado.'}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </main>
     </div>
   );

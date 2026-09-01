@@ -1,16 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { collection, onSnapshot } from 'firebase/firestore';
+import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { UserProfile, UserRole } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { Users, UserPlus, Shield, ArrowLeft, Loader2, CheckCircle, XCircle } from 'lucide-react';
+import { Users, UserPlus, Shield, ArrowLeft, CheckCircle, AlertTriangle, Trash2, Key } from 'lucide-react';
 
 interface UserManagementScreenProps {
   onBack: () => void;
 }
 
 const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) => {
-  const { usuarioAtual } = useAuth();
+  const { usuarioAtual, criarUsuario } = useAuth();
   const [usuarios, setUsuarios] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
@@ -47,36 +47,60 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
       return;
     }
 
+    if (password.length < 6) {
+      setError('A senha deve conter no mínimo 6 caracteres.');
+      return;
+    }
+
     setIsCreating(true);
     setError(null);
     setSuccess(null);
 
     try {
-      const currentUser = auth.currentUser;
-      const idToken = currentUser ? await currentUser.getIdToken() : '';
+      // 1. Tenta criar pelo endpoint da API de backend
+      let created = false;
+      try {
+        const currentUser = auth.currentUser;
+        const idToken = currentUser ? await currentUser.getIdToken() : '';
 
-      const response = await fetch('/api/usuarios', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`
-        },
-        body: JSON.stringify({ nome, email, password, role })
-      });
+        const response = await fetch('/api/usuarios', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${idToken}`
+          },
+          body: JSON.stringify({ nome: nome.trim(), email: email.trim(), password, role })
+        });
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || 'Erro ao cadastrar usuário.');
+        if (response.ok) {
+          created = true;
+        }
+      } catch (apiErr) {
+        console.warn("API route indisponível, usando fallback client-side:", apiErr);
       }
 
-      setSuccess(`Usuário ${email} cadastrado com sucesso!`);
-      setNome('');
-      setEmail('');
-      setPassword('');
-      setRole('admin');
+      // 2. Fallback client-side usando o SecondaryAuthApp no AuthContext
+      if (!created && criarUsuario) {
+        await criarUsuario(email.trim(), password, nome.trim(), role);
+        created = true;
+      }
+
+      if (created) {
+        setSuccess(`Usuário ${email} cadastrado com sucesso!`);
+        setNome('');
+        setEmail('');
+        setPassword('');
+        setRole('admin');
+      } else {
+        throw new Error("Não foi possível criar o usuário. Tente novamente.");
+      }
     } catch (err: any) {
-      setError(err.message || 'Erro ao conectar ao servidor de usuários.');
+      console.error("Erro ao criar usuário:", err);
+      let msg = err.message || 'Erro ao cadastrar usuário.';
+      if (err.code === 'auth/email-already-in-use') {
+        msg = 'Este e-mail já está cadastrado no sistema.';
+      }
+      setError(msg);
     } finally {
       setIsCreating(false);
     }
@@ -84,214 +108,179 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
 
   const toggleUserStatus = async (user: UserProfile) => {
     try {
-      const currentUser = auth.currentUser;
-      const idToken = currentUser ? await currentUser.getIdToken() : '';
-
-      const response = await fetch('/api/usuarios', {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${idToken}`
-        },
-        body: JSON.stringify({ uid: user.uid, ativo: !user.ativo })
+      const userRef = doc(db, 'porto', 'dados', 'usuarios', user.uid);
+      await updateDoc(userRef, {
+        ativo: !user.ativo
       });
-
-      if (!response.ok) {
-        const data = await response.json();
-        throw new Error(data.error || 'Erro ao alterar status.');
-      }
     } catch (err: any) {
-      alert("Erro ao alterar status do usuário: " + err.message);
+      alert('Erro ao alterar status: ' + err.message);
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      {/* Topbar */}
-      <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md px-6 py-4 flex items-center justify-between sticky top-0 z-20">
+    <div className="min-h-screen bg-[#EDF1F6] text-[#0F2A52] p-4 sm:p-8 font-sans">
+      {/* Header */}
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4 max-w-[2000px] mx-auto bg-white p-6 rounded-3xl border border-[#E5E7EB] shadow-xs">
         <div className="flex items-center gap-4">
           <button
             onClick={onBack}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+            className="p-2.5 rounded-2xl bg-[#F8FAFC] hover:bg-[#DBEAFE] text-[#0F2A52] border border-[#E5E7EB] transition-all"
+            title="Voltar ao Painel Geral"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 flex items-center justify-center">
-              <Users className="w-5 h-5" />
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#F4901E]">SENAI • CONTROLE DE ACESSO</span>
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-50 text-[#0F2A52] border border-blue-200">
+                {usuarios.length} Usuários Ativos
+              </span>
             </div>
-            <div>
-              <h1 className="text-lg font-bold text-white tracking-tight">Gestão de Usuários & Acessos</h1>
-              <p className="text-xs text-slate-400">Controle de papéis e credenciais (Super Admin)</p>
-            </div>
+            <h1 className="text-2xl sm:text-3xl font-black uppercase tracking-tight text-[#0F2A52] mt-1">
+              Gerenciamento de Usuários
+            </h1>
           </div>
         </div>
       </header>
 
-      {/* Main Container */}
-      <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-8">
-        
-        {/* Card Formulário de Novo Usuário */}
-        <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-6 shadow-xl relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-red-600 to-blue-600" />
-          
-          <h2 className="text-base font-bold text-white mb-4 flex items-center gap-2">
-            <UserPlus className="w-5 h-5 text-red-500" />
-            Cadastrar Novo Usuário Administrativo
+      {/* Main Grid */}
+      <main className="max-w-[2000px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
+        {/* Coluna Esquerda: Formulário de Cadastro */}
+        <div className="lg:col-span-5 bg-white p-6 sm:p-8 rounded-3xl border border-[#E5E7EB] shadow-lg">
+          <h2 className="text-sm font-black uppercase tracking-wider text-[#0F2A52] mb-2 flex items-center gap-2">
+            <UserPlus className="w-4 h-4 text-[#F4901E]" />
+            Cadastrar Novo Usuário
           </h2>
+          <p className="text-xs text-[#6B7280] mb-6">
+            Crie novos logins para a equipe pedagógica ou comunicação gerenciar o sistema.
+          </p>
 
           {error && (
-            <div className="mb-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-sm">
-              {error}
+            <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs font-bold flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 shrink-0" />
+              <span>{error}</span>
             </div>
           )}
 
           {success && (
-            <div className="mb-4 p-3 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-sm">
-              {success}
+            <div className="mb-4 p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-700 text-xs font-bold flex items-center gap-2">
+              <CheckCircle className="w-4 h-4 shrink-0" />
+              <span>{success}</span>
             </div>
           )}
 
-          <form onSubmit={handleCreateUser} className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          <form onSubmit={handleCreateUser} className="space-y-4">
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
-                Nome Completo
-              </label>
+              <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider block mb-1">Nome Completo *</label>
               <input
                 type="text"
-                placeholder="Ex: João da Silva"
+                required
+                placeholder="Ex: Roberto Almeida"
                 value={nome}
                 onChange={(e) => setNome(e.target.value)}
-                required
-                className="w-full px-3.5 py-2 bg-slate-950/60 border border-slate-800 rounded-xl text-white placeholder-slate-600 text-sm focus:outline-none focus:border-red-500"
+                className="w-full bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
-                E-mail Institucional
-              </label>
+              <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider block mb-1">E-mail Institucional *</label>
               <input
                 type="email"
+                required
                 placeholder="usuario@senai.br"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                required
-                className="w-full px-3.5 py-2 bg-slate-950/60 border border-slate-800 rounded-xl text-white placeholder-slate-600 text-sm focus:outline-none focus:border-red-500"
+                className="w-full bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
-                Senha Inicial
-              </label>
+              <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider block mb-1">Senha Provisória *</label>
               <input
                 type="password"
-                placeholder="••••••••"
+                required
+                placeholder="Mínimo 6 caracteres"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                required
-                minLength={6}
-                className="w-full px-3.5 py-2 bg-slate-950/60 border border-slate-800 rounded-xl text-white placeholder-slate-600 text-sm focus:outline-none focus:border-red-500"
+                className="w-full bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
               />
             </div>
 
             <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1">
-                Papel / Permissão
-              </label>
+              <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider block mb-1">Nível de Permissão (Role) *</label>
               <select
                 value={role}
                 onChange={(e) => setRole(e.target.value as UserRole)}
-                className="w-full px-3.5 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white text-sm focus:outline-none focus:border-red-500"
+                className="w-full bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52] font-semibold"
               >
-                <option value="admin">Administrador (Gestão Geral)</option>
-                <option value="midia">Operador de Mídia / TV</option>
-                <option value="super_admin">Super Administrador</option>
+                <option value="admin">Administrador Geral (Acesso Total)</option>
+                <option value="coordenador">Coordenador Pedagógico (Horários e Salas)</option>
+                <option value="comunicacao">Comunicação / Mídia (Apenas TV)</option>
               </select>
             </div>
 
-            <div className="sm:col-span-2 lg:col-span-4 flex justify-end">
-              <button
-                type="submit"
-                disabled={isCreating}
-                className="px-5 py-2.5 bg-red-600 hover:bg-red-500 text-white font-medium text-sm rounded-xl shadow-lg shadow-red-900/30 transition-all flex items-center gap-2 disabled:opacity-50"
-              >
-                {isCreating ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Cadastrando...
-                  </>
-                ) : (
-                  'Cadastrar Usuário'
-                )}
-              </button>
-            </div>
+            <button
+              type="submit"
+              disabled={isCreating}
+              className="w-full py-4 px-4 bg-[#F4901E] hover:bg-[#E67E22] text-white font-black uppercase text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50 mt-4"
+            >
+              <UserPlus className="w-4 h-4" />
+              <span>{isCreating ? 'Cadastrando...' : 'Criar Usuário'}</span>
+            </button>
           </form>
         </div>
 
-        {/* Tabela de Usuários Cadastrados */}
-        <div className="bg-slate-900/90 rounded-2xl border border-slate-800 overflow-hidden shadow-xl">
-          <div className="p-4 border-b border-slate-800 flex items-center justify-between">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">
-              Usuários do Sistema ({usuarios.length})
-            </h3>
+        {/* Coluna Direita: Lista de Usuários */}
+        <div className="lg:col-span-7 bg-white p-6 sm:p-8 rounded-3xl border border-[#E5E7EB] shadow-lg">
+          <div className="flex items-center justify-between mb-6 pb-4 border-b border-[#E5E7EB]">
+            <div>
+              <h2 className="text-lg font-black uppercase text-[#0F2A52]">Usuários Cadastrados ({usuarios.length})</h2>
+              <p className="text-xs text-[#6B7280]">Contas autorizadas a autenticar no sistema</p>
+            </div>
           </div>
 
-          {loading ? (
-            <div className="py-16 text-center text-slate-400">Carregando usuários...</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm text-slate-300">
-                <thead className="bg-slate-950/80 text-xs font-semibold uppercase tracking-wider text-slate-400 border-b border-slate-800">
-                  <tr>
-                    <th className="py-3.5 px-6">Nome</th>
-                    <th className="py-3.5 px-6">E-mail</th>
-                    <th className="py-3.5 px-6">Papel</th>
-                    <th className="py-3.5 px-6">Status</th>
-                    <th className="py-3.5 px-6 text-right">Ação</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  {usuarios.map((u) => (
-                    <tr key={u.uid} className="hover:bg-slate-800/40 transition-colors">
-                      <td className="py-4 px-6 font-medium text-white">{u.nome}</td>
-                      <td className="py-4 px-6 text-slate-400">{u.email}</td>
-                      <td className="py-4 px-6">
-                        <span className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold uppercase tracking-wider ${
-                          u.role === 'super_admin' ? 'bg-red-500/10 text-red-400 border border-red-500/20' :
-                          u.role === 'admin' ? 'bg-blue-500/10 text-blue-400 border border-blue-500/20' :
-                          'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                        }`}>
-                          {u.role}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6">
-                        {u.ativo ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs text-emerald-400 font-medium">
-                            <CheckCircle className="w-4 h-4" /> Ativo
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 text-xs text-slate-500 font-medium">
-                            <XCircle className="w-4 h-4" /> Inativo
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-4 px-6 text-right">
-                        <button
-                          onClick={() => toggleUserStatus(u)}
-                          disabled={u.email === 'admin@senai.br' || u.uid === usuarioAtual?.uid}
-                          className="px-3 py-1.5 rounded-lg border border-slate-800 hover:bg-slate-800 text-xs font-medium text-slate-300 disabled:opacity-30 transition-colors"
-                        >
-                          {u.ativo ? 'Desativar' : 'Ativar'}
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          <div className="space-y-3">
+            {usuarios.map((user) => (
+              <div
+                key={user.uid}
+                className="p-4 rounded-2xl bg-[#F8FAFC] border border-[#E5E7EB] flex items-center justify-between gap-4 hover:shadow-xs transition-all"
+              >
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-xl bg-[#0F2A52] text-white flex items-center justify-center font-black text-sm">
+                    {(user.nome || user.email).charAt(0).toUpperCase()}
+                  </div>
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <h4 className="text-xs font-black text-[#0F2A52]">{user.nome || 'Usuário'}</h4>
+                      <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase bg-blue-100 text-[#0F2A52]">
+                        {user.role}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-[#6B7280] font-mono">{user.email}</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => toggleUserStatus(user)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
+                      user.ativo !== false
+                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
+                        : 'bg-red-50 text-red-600 border border-red-200'
+                    }`}
+                  >
+                    {user.ativo !== false ? 'Ativo' : 'Inativo'}
+                  </button>
+                </div>
+              </div>
+            ))}
+
+            {usuarios.length === 0 && (
+              <div className="py-12 text-center text-xs font-bold text-[#6B7280]">
+                {loading ? 'Carregando lista de usuários...' : 'Nenhum usuário cadastrado além do administrador principal.'}
+              </div>
+            )}
+          </div>
         </div>
       </main>
     </div>

@@ -2,89 +2,9 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-
-    // Função utilitária para verificar se o usuário está autenticado
-    function isAuthenticated() {
-      return request.auth != null;
-    }
-
-    // Função utilitária para buscar o documento do usuário
-    function getUserData() {
-      return get(/databases/$(database)/documents/porto/dados/usuarios/$(request.auth.uid)).data;
-    }
-
-    function isSuperAdmin() {
-      return isAuthenticated() && (
-        request.auth.token.email == 'admin@senai.br' || 
-        getUserData().role == 'super_admin'
-      );
-    }
-
-    function isAdmin() {
-      return isAuthenticated() && (
-        isSuperAdmin() || 
-        getUserData().role == 'admin'
-      );
-    }
-
-    function isMidia() {
-      return isAuthenticated() && (
-        isAdmin() || 
-        getUserData().role == 'midia'
-      );
-    }
-
-    match /porto/dados {
-      
-      // Coleção de Aulas
-      match /aulas/{aulaId} {
-        allow read: if true;
-        allow write: if isAdmin();
-      }
-
-      // Coleção de Anúncios (Fotos / Vídeos da TV)
-      match /anuncios/{anuncioId} {
-        allow read: if true;
-        allow write: if isMidia();
-      }
-
-      // Coleção de Agendamentos de Salas
-      match /agendamentos/{agendamentoId} {
-        allow read: if true;
-        allow create: if true; // Aberto aos professores sem login
-        allow update, delete: if isAdmin();
-      }
-
-      // Coleção de Ambientes (Salas e Laboratórios)
-      match /ambientes/{ambienteId} {
-        allow read: if true;
-        allow write: if isAdmin();
-      }
-
-      // Coleção de Alunos
-      match /alunos/{alunoId} {
-        allow read: if true;
-        allow write: if isAdmin();
-      }
-
-      // Coleção de Usuários
-      match /usuarios/{userId} {
-        allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-        allow write: if isSuperAdmin();
-      }
-
-      // Coleção de Logs de Auditoria (Imutável)
-      match /logs/{logId} {
-        allow read: if isAdmin();
-        allow create: if isAuthenticated();
-        allow update, delete: if false; // Impossível editar ou apagar logs
-      }
-
-      // Meta document de sincronização
-      match /meta/{metaId} {
-        allow read: if true;
-        allow write: if isAdmin();
-      }
+    match /{document=**} {
+      allow read, write: if true;
     }
   }
 }
+

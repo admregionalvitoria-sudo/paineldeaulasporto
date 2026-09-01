@@ -9,11 +9,11 @@ function getAdminApp() {
         const serviceAccount = typeof serviceAccountVar === 'string' ? JSON.parse(serviceAccountVar) : serviceAccountVar;
         firebaseAdmin.initializeApp({
           credential: firebaseAdmin.credential.cert(serviceAccount),
-          projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'painel-de-aulas'
+          projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'grand-droplet-7xjsq'
         });
       } else {
         firebaseAdmin.initializeApp({
-          projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'painel-de-aulas'
+          projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'grand-droplet-7xjsq'
         });
       }
     } catch (e) {

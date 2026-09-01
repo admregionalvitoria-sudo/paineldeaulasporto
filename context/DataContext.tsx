@@ -1,8 +1,7 @@
-
-import React, { createContext, useState, useEffect, ReactNode, useCallback, useMemo } from 'react';
+import React, { createContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { upload as vercelBlobUpload } from '@vercel/blob/client';
-import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType } from '../types';
-import { db, storage } from '../firebase';
+import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType, AuditAction } from '../types';
+import { db, storage, auth } from '../firebase';
 import { formatarUnidadeCurricular } from '../utils/curricularUnits';
 import { 
   collection, 
@@ -21,8 +20,7 @@ import {
 import { 
   ref, 
   uploadBytes, 
-  getDownloadURL, 
-  deleteObject 
+  getDownloadURL 
 } from 'firebase/storage';
 
 declare const XLSX: any;
@@ -34,9 +32,16 @@ export interface ExtendedDataContextType extends DataContextType {
 
 export const DataContext = createContext<ExtendedDataContextType | undefined>(undefined);
 
-// Constantes para a nova estrutura do Firestore
 const FIRESTORE_ROOT_COLLECTION = 'porto';
 const FIRESTORE_DATA_DOCUMENT = 'dados';
+
+export const normalizarNomeAmbiente = (nome: string): string => {
+  if (!nome) return '';
+  return nome
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toUpperCase();
+};
 
 const compressImageToDataUrl = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -65,11 +70,9 @@ const compressImageToDataUrl = (file: File): Promise<string> => {
 
         ctx.drawImage(img, 0, 0, width, height);
 
-        // Tentar JPEG com qualidade 0.82 (proporciona imagens nítidas < 300KB)
         let quality = 0.82;
         let compressed = canvas.toDataURL('image/jpeg', quality);
 
-        // Se ainda for grande (> 650KB), reduz a qualidade gradualmente
         while (compressed.length > 700000 && quality > 0.4) {
           quality -= 0.15;
           compressed = canvas.toDataURL('image/jpeg', quality);
@@ -98,11 +101,8 @@ const calcularTurnoPorHorario = (horarioStr: string): string => {
     if (!horarioStr || !horarioStr.includes(':')) return 'Matutino';
     const [horas, minutos] = horarioStr.split(':').map(Number);
     const totalMinutos = (horas * 60) + (minutos || 0);
-    // 06:00 até 11:49:59 (360 até 709 minutos) -> Matutino
     if (totalMinutos >= 360 && totalMinutos < 710) return 'Matutino';
-    // 11:50 até 17:49:59 (710 até 1069 minutos) -> Vespertino
     if (totalMinutos >= 710 && totalMinutos < 1070) return 'Vespertino';
-    // 17:50 até 05:59:59 -> Noturno
     return 'Noturno';
 };
 
@@ -110,7 +110,6 @@ const formatarDataCSV = (valor: any): string => {
   if (!valor) return '';
   const valStr = String(valor).trim();
 
-  // Se já for DD/MM/YYYY ou D/M/YYYY
   if (valStr.includes('/')) {
     const parts = valStr.split('/');
     if (parts.length === 3) {
@@ -123,7 +122,6 @@ const formatarDataCSV = (valor: any): string => {
     return valStr;
   }
 
-  // Se for YYYY-MM-DD
   if (valStr.includes('-')) {
     const parts = valStr.split('-');
     if (parts.length === 3 && parts[0].length === 4) {
@@ -131,7 +129,6 @@ const formatarDataCSV = (valor: any): string => {
     }
   }
 
-  // Fallback para número serial do Excel
   const num = Number(valor);
   if (!isNaN(num) && num > 30000 && num < 60000) {
     const data = new Date(Math.round((num - 25569) * 86400 * 1000));
@@ -151,43 +148,113 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [agendamentos, setAgendamentos] = useState<AgendamentoSala[]>([]);
+  const [ambientesPersonalizados, setAmbientesPersonalizados] = useState<{ id: string; nome: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncSource, setSyncSource] = useState<string | null>(null);
   const [isOffline, setIsOffline] = useState<boolean>(typeof navigator !== 'undefined' ? !navigator.onLine : false);
 
-  // Referências para controle de recarregamento em tempo real
   const isInitialAulasLoadedRef = React.useRef(false);
   const lastAulasHashRef = React.useRef<string>('');
   const reloadTimeoutRef = React.useRef<any>(null);
   const isInitialMetaLoadedRef = React.useRef(false);
 
-  // Lista unificada e dinâmica de todas as salas cadastradas no sistema (apenas salas reais das aulas importadas do CSV ou agendamentos)
-  const salasCadastradas = useMemo(() => {
-    const salasSet = new Set<string>();
+  // Registro de Auditoria no Firestore
+  const registrarLog = async (
+    acao: AuditAction,
+    entidadeTipo: string,
+    entidadeId: string,
+    detalhes?: string,
+    antes?: any,
+    depois?: any
+  ) => {
+    try {
+      const user = auth.currentUser;
+      const email = user?.email || 'admin@senai.br';
+      const nome = user?.displayName || (user?.email ? user.email.split('@')[0] : 'Administrador SENAI');
+      const uid = user?.uid || 'system';
 
-    // Salas vindas exclusivamente das aulas importadas do CSV/Firestore
+      const logsColl = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'logs');
+      await addDoc(logsColl, {
+        actorUid: uid,
+        actorEmail: email,
+        actorNome: nome,
+        acao,
+        entidadeTipo,
+        entidadeId: String(entidadeId || ''),
+        detalhes: detalhes || '',
+        antes: antes || null,
+        depois: depois || null,
+        timestamp: serverTimestamp(),
+        dataHora: new Date().toLocaleString('pt-BR')
+      });
+    } catch (logErr) {
+      console.warn("Aviso ao registrar log de auditoria:", logErr);
+    }
+  };
+
+  // Lista unificada e estritamente desduplicada de todas as salas cadastradas no sistema
+  const salasCadastradas = useMemo(() => {
+    const salasMap = new Map<string, string>(); // normalizado -> nome formatado
+
+    // 1. Ambientes personalizados
+    ambientesPersonalizados.forEach(item => {
+      if (item.nome && item.nome.trim()) {
+        const norm = normalizarNomeAmbiente(item.nome);
+        if (!salasMap.has(norm)) {
+          salasMap.set(norm, item.nome.trim());
+        }
+      }
+    });
+
+    // 2. Salas das aulas
     aulas.forEach(a => {
       if (a.sala && a.sala.trim()) {
-        salasSet.add(a.sala.trim());
+        const norm = normalizarNomeAmbiente(a.sala);
+        if (!salasMap.has(norm)) {
+          salasMap.set(norm, a.sala.trim());
+        }
       }
     });
 
-    // Salas vindas de agendamentos reais cadastrados
+    // 3. Salas dos agendamentos
     agendamentos.forEach(ag => {
       if (ag.sala && ag.sala.trim()) {
-        salasSet.add(ag.sala.trim());
+        const norm = normalizarNomeAmbiente(ag.sala);
+        if (!salasMap.has(norm)) {
+          salasMap.set(norm, ag.sala.trim());
+        }
       }
     });
 
-    return Array.from(salasSet).sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true, sensitivity: 'base' }));
-  }, [aulas, agendamentos]);
+    return Array.from(salasMap.values()).sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true, sensitivity: 'base' }));
+  }, [aulas, agendamentos, ambientesPersonalizados]);
 
-  // 1. Monitoramento de Conexão com a Internet (Online / Offline)
+  // Checagem de conflito: impede 2 turmas no mesmo ambiente no mesmo dia e turno
+  const verificarConflitoAmbiente = (
+    sala: string,
+    data: string,
+    turno: string,
+    ignorarAulaId?: string
+  ): Aula | undefined => {
+    const normSala = normalizarNomeAmbiente(sala);
+    const normData = data.trim();
+    const normTurno = (turno || '').toLowerCase().trim();
+
+    return aulas.find(a => {
+      if (ignorarAulaId && a.id === ignorarAulaId) return false;
+      return (
+        normalizarNomeAmbiente(a.sala) === normSala &&
+        a.data.trim() === normData &&
+        (a.turno || '').toLowerCase().trim() === normTurno
+      );
+    });
+  };
+
+  // Monitoramento de Conexão Online/Offline
   useEffect(() => {
     const handleOnline = () => {
       setIsOffline(false);
-      // Quando a internet voltar, recarrega a página para puxar os dados mais novos do banco
       window.location.reload();
     };
 
@@ -198,7 +265,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
 
-    // Verificação periódica de conectividade ativa
     const checkInterval = setInterval(() => {
       if (typeof navigator !== 'undefined') {
         const currentlyOnline = navigator.onLine;
@@ -218,15 +284,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
   }, []);
 
-  // 2. Listeners do Firestore em Tempo Real e Auto-Reload
+  // Listeners do Firestore em Tempo Real
   useEffect(() => {
     const aulasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
     const anunciosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'anuncios');
     const alunosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'alunos');
     const agendamentosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos');
+    const ambientesCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'ambientes');
     const metaDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'sync');
 
-    // Listener para o documento de sincronização global (disparado ao importar novo CSV ou salvar)
     const unsubMeta = onSnapshot(metaDocRef, (docSnap) => {
       if (!isInitialMetaLoadedRef.current) {
         isInitialMetaLoadedRef.current = true;
@@ -236,10 +302,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.warn("Aviso listener meta sync:", err);
     });
 
-    // Listener para Aulas ordenadas
+    const unsubAmbientes = onSnapshot(ambientesCollectionRef, (snapshot) => {
+      const ambData = snapshot.docs.map(d => ({
+        id: d.id,
+        nome: d.data().nome || ''
+      })).filter(a => !!a.nome);
+      setAmbientesPersonalizados(ambData);
+    }, (err) => {
+      console.warn("Aviso listener ambientes:", err);
+    });
+
     const qAulas = query(aulasCollectionRef, orderBy('ordem', 'asc'));
     const unsubAulas = onSnapshot(qAulas, { includeMetadataChanges: true }, (snapshot) => {
-      // Se o snapshot veio estritamente do cache e não há conexão, sinaliza offline
       if (snapshot.metadata.fromCache && !navigator.onLine) {
         setIsOffline(true);
       }
@@ -249,7 +323,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const d = docSnap.data();
         const formattedUC = formatarUnidadeCurricular(d.unidade_curricular);
         
-        // Se o banco ainda contém o texto corrompido ou com (CH: ...), atualiza em background
         if (d.unidade_curricular !== formattedUC && navigator.onLine) {
           batchUpdates.push(
             updateDoc(docSnap.ref, { 
@@ -278,15 +351,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setLoading(false);
     });
 
-    // Listener para Anúncios (ordenados pelo campo 'ordem' ou data de criação)
     const unsubAnuncios = onSnapshot(anunciosCollectionRef, (snapshot) => {
       const anunciosData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as Anuncio[];
-      // Ordenação rigorosa por 'ordem' para respeitar a sequência configurada pelo administrador
       anunciosData.sort((a, b) => {
         const orderA = typeof a.ordem === 'number' ? a.ordem : 999;
         const orderB = typeof b.ordem === 'number' ? b.ordem : 999;
         if (orderA !== orderB) return orderA - orderB;
-        // Fallback para timestamp
         const timeA = a.createdAt?.toMillis?.() || a.createdAt || 0;
         const timeB = b.createdAt?.toMillis?.() || b.createdAt || 0;
         return timeA - timeB;
@@ -296,7 +366,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.error("Erro ao carregar anúncios do Firestore:", err);
     });
 
-    // Listener para Alunos
     const unsubAlunos = onSnapshot(alunosCollectionRef, (snapshot) => {
       const alunosData = snapshot.docs.map(doc => ({ 
         id: doc.id,
@@ -307,7 +376,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setAlunos(alunosData);
     });
 
-    // Listener para Agendamentos de Salas
     const unsubAgendamentos = onSnapshot(agendamentosCollectionRef, (snapshot) => {
       const agendamentosData = snapshot.docs.map(docSnap => {
         const d = docSnap.data();
@@ -332,7 +400,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         } as AgendamentoSala;
       });
 
-      // Ordenar: pendentes primeiro, depois por data mais recente
       agendamentosData.sort((a, b) => {
         if (a.status === 'pendente' && b.status !== 'pendente') return -1;
         if (a.status !== 'pendente' && b.status === 'pendente') return 1;
@@ -348,6 +415,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     return () => {
       unsubMeta();
+      unsubAmbientes();
       unsubAulas();
       unsubAnuncios();
       unsubAlunos();
@@ -356,118 +424,78 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     };
   }, []);
 
-  const uploadMediaFile = async (file: File): Promise<{ src: string; type: 'image' | 'video'; storagePath?: string; name: string }> => {
-    const isVideo = file.type.startsWith('video/') || /\.(mp4|webm|mov|ogg)$/i.test(file.name);
-    const isImage = file.type.startsWith('image/') || /\.(png|jpe?g|webp|gif)$/i.test(file.name);
-    const mediaType: 'image' | 'video' = isVideo ? 'video' : 'image';
-
-    let lastError: any = null;
-
-    // 0. TENTATIVA 0: Cloudinary (Upload Direto Unsigned do Navegador)
-    const cloudinaryCloudName = (import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || localStorage.getItem('CLOUDINARY_CLOUD_NAME') || 'dlrdwblso').trim();
-    const cloudinaryPreset = (import.meta.env.VITE_CLOUDINARY_UPLOAD_PRESET || localStorage.getItem('CLOUDINARY_UPLOAD_PRESET') || '').trim();
-
-    if (cloudinaryCloudName && cloudinaryPreset) {
-      try {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('upload_preset', cloudinaryPreset);
-        
-        const resourceType = isVideo ? 'video' : 'image';
-        const cloudinaryUrl = `https://api.cloudinary.com/v1_1/${cloudinaryCloudName}/${resourceType}/upload`;
-
-        const clResponse = await fetch(cloudinaryUrl, {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (clResponse.ok) {
-          const clData = await clResponse.json();
-          if (clData.secure_url || clData.url) {
-            return {
-              src: clData.secure_url || clData.url,
-              type: mediaType,
-              storagePath: clData.public_id || clData.secure_url,
-              name: file.name
-            };
-          }
-        } else {
-          const errData = await clResponse.json().catch(() => ({}));
-          console.warn("Cloudinary upload failed:", errData);
-          const rawMsg = errData?.error?.message || '';
-          let userFriendlyMsg = rawMsg;
-          if (rawMsg.toLowerCase().includes('api key') || rawMsg.toLowerCase().includes('chave de api') || rawMsg.toLowerCase().includes('preset')) {
-            userFriendlyMsg = `Cloudinary: O Upload Preset "${cloudinaryPreset}" não foi encontrado como "Unsigned" na nuvem "${cloudinaryCloudName}". Verifique em Cloudinary > Settings > Upload > Upload Presets.`;
-          }
-          lastError = new Error(userFriendlyMsg || 'Erro ao enviar para o Cloudinary');
-          throw lastError;
-        }
-      } catch (clErr: any) {
-        console.warn("Erro ao tentar Cloudinary:", clErr);
-        lastError = clErr;
-        throw lastError;
-      }
+  const adicionarAmbiente = async (nomeInput: string) => {
+    const nomeLimpo = nomeInput.trim().replace(/\s+/g, ' ');
+    if (!nomeLimpo) {
+      throw new Error("O nome do ambiente não pode ser vazio.");
+    }
+    const norm = normalizarNomeAmbiente(nomeLimpo);
+    const existe = salasCadastradas.some(s => normalizarNomeAmbiente(s) === norm);
+    if (existe) {
+      throw new Error(`O ambiente "${nomeLimpo}" já está cadastrado no sistema.`);
     }
 
-    // 1. TENTATIVA 1: Vercel Blob Storage (Upload Direto do Cliente / Browser para Vercel Blob)
     try {
-      const blob = await vercelBlobUpload(file.name, file, {
+      const ambientesColl = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'ambientes');
+      await addDoc(ambientesColl, {
+        nome: nomeLimpo,
+        nomeNormalizado: norm,
+        criadoEm: serverTimestamp()
+      });
+      await registrarLog('CRIAR_AMBIENTE', 'ambiente', nomeLimpo, `Novo ambiente "${nomeLimpo}" cadastrado`);
+    } catch (err: any) {
+      console.error("Erro ao cadastrar ambiente:", err);
+      throw new Error(err.message || "Erro ao salvar ambiente no banco.");
+    }
+  };
+
+  const excluirAmbiente = async (nome: string) => {
+    try {
+      const norm = normalizarNomeAmbiente(nome);
+      const found = ambientesPersonalizados.find(a => normalizarNomeAmbiente(a.nome) === norm);
+      if (found) {
+        const ambDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'ambientes', found.id);
+        await deleteDoc(ambDocRef);
+        await registrarLog('EXCLUIR_AMBIENTE', 'ambiente', nome, `Ambiente "${nome}" removido do cadastro`);
+      }
+    } catch (err: any) {
+      console.error("Erro ao excluir ambiente:", err);
+      throw new Error("Não foi possível excluir o ambiente.");
+    }
+  };
+
+  const uploadMediaFile = async (file: File): Promise<{ src: string; type: 'image' | 'video'; storagePath?: string; name: string }> => {
+    const isVideo = file.type.startsWith('video/') || /\.(mp4|webm|mov|ogg)$/i.test(file.name);
+    const mediaType: 'image' | 'video' = isVideo ? 'video' : 'image';
+    const timestamp = Date.now();
+    const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const storagePath = `midias/${timestamp}_${cleanFileName}`;
+
+    try {
+      const blob = await vercelBlobUpload(storagePath, file, {
         access: 'public',
         handleUploadUrl: '/api/upload',
       });
-      if (blob && blob.url) {
-        return {
-          src: blob.url,
-          type: mediaType,
-          storagePath: blob.url,
-          name: file.name
-        };
-      }
-    } catch (vercelClientErr: any) {
-      console.warn("Vercel Blob Client upload indisponível:", vercelClientErr);
-      lastError = vercelClientErr;
+      return { src: blob.url, type: mediaType, storagePath: blob.url, name: file.name };
+    } catch (vercelError) {
+      console.warn("Vercel Blob falhou. Tentando Firebase Storage...", vercelError);
     }
 
-    // 2. TENTATIVA 2: Vercel Blob (Endpoint /api/upload tradicional)
     try {
-      const response = await fetch(`/api/upload?filename=${encodeURIComponent(file.name)}`, {
-        method: 'POST',
-        body: file,
-        headers: {
-          'x-filename': encodeURIComponent(file.name),
-          'Content-Type': file.type || 'application/octet-stream'
-        }
-      });
-      if (response.ok) {
-        const data = await response.json();
-        if (data.url || data.downloadUrl) {
-          return {
-            src: data.url || data.downloadUrl,
-            type: mediaType,
-            storagePath: data.url || 'vercel_blob',
-            name: file.name
-          };
-        }
-      }
-    } catch (vercelErr) {
-      console.warn("Vercel Blob /api/upload indisponível:", vercelErr);
+      const storageRef = ref(storage, storagePath);
+      const snapshot = await uploadBytes(storageRef, file);
+      const downloadUrl = await getDownloadURL(snapshot.ref);
+      return { src: downloadUrl, type: mediaType, storagePath, name: file.name };
+    } catch (firebaseError) {
+      console.warn("Firebase Storage falhou. Usando Base64...", firebaseError);
     }
 
-    // 3. TENTATIVA 3: Fallback Otimizado para Imagens (Compressão < 500KB)
-    if (isImage) {
-      const dataUrl = await compressImageToDataUrl(file);
-      return {
-        src: dataUrl,
-        type: 'image',
-        name: file.name
-      };
+    if (mediaType === 'image') {
+      const compressedDataUrl = await compressImageToDataUrl(file);
+      return { src: compressedDataUrl, type: 'image', name: file.name };
     } else {
-      // Para vídeos: O Firestore possui limite estrito de 1MB por documento.
-      const errMsg = lastError?.message || "BLOB_READ_WRITE_TOKEN não configurado no Vercel";
-      throw new Error(
-        `Não foi possível salvar o vídeo no Vercel Blob Storage (${errMsg}). ` +
-        `Certifique-se de que a variável de ambiente BLOB_READ_WRITE_TOKEN está configurada no painel da Vercel.`
-      );
+      const directDataUrl = await fileToDataUrl(file);
+      return { src: directDataUrl, type: 'video', name: file.name };
     }
   };
 
@@ -481,13 +509,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       });
 
-      const nextOrdem = cleanData.ordem !== undefined ? cleanData.ordem : anuncios.length;
-
+      const nextOrder = anuncios.length;
       await addDoc(anunciosCollectionRef, {
         ...cleanData,
-        ordem: nextOrdem,
+        ordem: nextOrder,
         createdAt: serverTimestamp()
       });
+
+      await registrarLog(
+        'UPLOAD_MIDIA', 
+        'midia', 
+        anuncioData.name || 'Nova Mídia', 
+        `Mídia "${anuncioData.name || 'Arquivo'}" (${anuncioData.type === 'video' ? 'Vídeo' : 'Imagem'}) adicionada com duração de ${anuncioData.duration || 15}s`
+      );
     } catch (e) {
       console.error("Erro ao adicionar anúncio:", e);
       throw e;
@@ -502,8 +536,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         batch.update(anuncioDocRef, { ordem: index, updatedAt: serverTimestamp() });
       });
       await batch.commit();
-      // Atualização otimista local
       setAnuncios([...orderedAnuncios.map((ad, index) => ({ ...ad, ordem: index }))]);
+
+      await registrarLog('REORDENAR_MIDIAS', 'midia', 'todas', 'Ordem das mídias rotativas atualizada');
     } catch (e) {
       console.error("Erro ao reordenar anúncios:", e);
       throw e;
@@ -512,7 +547,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const deleteAnuncio = async (id: string, storagePath?: string) => {
     try {
-      // 1. Excluir do Vercel Blob se for uma URL do Vercel
+      const anuncio = anuncios.find(a => a.id === id);
       if (storagePath && (storagePath.includes('blob.vercel-storage.com') || storagePath.startsWith('http'))) {
         try {
           await fetch(`/api/upload?url=${encodeURIComponent(storagePath)}`, { method: 'DELETE' });
@@ -521,9 +556,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       }
 
-      // 2. Excluir documento do Firestore
       const anuncioDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'anuncios', id);
       await deleteDoc(anuncioDocRef);
+
+      await registrarLog('EXCLUIR_MIDIA', 'midia', anuncio?.name || id, `Mídia "${anuncio?.name || id}" excluída do painel`);
     } catch (e) {
       console.error("Erro ao deletar anúncio:", e);
       throw e;
@@ -532,7 +568,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const replaceAnuncio = async (id: string, newAnuncio: Omit<Anuncio, 'id'>, oldStoragePath?: string) => {
     try {
-      // 1. Excluir mídia antiga do Vercel Blob se existir
       if (oldStoragePath && (oldStoragePath.includes('blob.vercel-storage.com') || oldStoragePath.startsWith('http'))) {
         try {
           await fetch(`/api/upload?url=${encodeURIComponent(oldStoragePath)}`, { method: 'DELETE' });
@@ -548,12 +583,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       });
 
-      // 2. Atualizar documento no Firestore
       const anuncioDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'anuncios', id);
       await updateDoc(anuncioDocRef, {
         ...cleanData,
         updatedAt: serverTimestamp()
       });
+
+      await registrarLog('SUBSTITUIR_MIDIA', 'midia', newAnuncio.name || id, `Mídia substituída por "${newAnuncio.name || 'Nova Mídia'}"`);
     } catch (e) {
       console.error("Erro ao substituir anúncio:", e);
       throw e;
@@ -575,6 +611,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
 
       await Promise.all(deletePromises);
+      await registrarLog('EXCLUIR_MIDIA', 'midia', 'todas', 'Todas as mídias foram excluídas');
     } catch (e) {
       console.error("Erro ao limpar todos os anúncios:", e);
       throw e;
@@ -586,7 +623,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       throw new Error("O arquivo enviado está vazio.");
     }
 
-    // 1. Normalizar linhas (caso venha em célula única com separadores de CSV como ';' ',' ou '\t')
     const jsonData = rawJsonData.map(row => {
       if (!Array.isArray(row)) return [];
       if (row.length === 1 && typeof row[0] === 'string') {
@@ -602,7 +638,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       throw new Error("Nenhum dado legível encontrado no arquivo.");
     }
 
-    // 2. Localizar dinamicamente a linha de cabeçalho
     let headerRowIndex = -1;
     for (let i = 0; i < Math.min(jsonData.length, 15); i++) {
       const rowStr = jsonData[i].map(c => String(c).toLowerCase()).join(' ');
@@ -625,7 +660,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const headers = jsonData[headerRowIndex].map(h => String(h || '').toLowerCase().trim().replace(/^["']|["']$/g, ''));
 
-    // 3. Mapear índices das colunas
     const idx = {
       data: headers.findIndex(h => h.includes('data')),
       sala: headers.findIndex(h => (h.includes('ambiente') || h.includes('sala') || h.includes('justificativa')) && !h.includes('instrutor')),
@@ -636,13 +670,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       fim: headers.findIndex(h => h.includes('fim'))
     };
 
-    // Fallbacks flexíveis
     if (idx.turma === -1) idx.turma = headers.findIndex(h => h.includes('tipo') && !h.includes('agenda'));
     if (idx.sala === -1) idx.sala = headers.findIndex(h => h.includes('ambiente') || h.includes('sala'));
 
     if (idx.data === -1 || idx.inicio === -1 || idx.turma === -1 || idx.sala === -1 || idx.instrutor === -1) {
       console.error("Cabeçalho do CSV inválido. Colunas identificadas:", { headers, idx });
-      throw new Error("O arquivo CSV não possui as colunas esperadas (Data, Ambiente, Turma, Instrutor, Início). Verifique o cabeçalho do arquivo.");
+      throw new Error("O arquivo CSV não possui as colunas esperadas (Data, Ambiente, Turma, Instrutor, Início).");
     }
 
     let globalOrder = 0;
@@ -671,7 +704,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       const startTime = inicios[0];
       const endTime = fins.length > 0 ? fins[fins.length - 1] : (inicios.length > 1 ? inicios[inicios.length - 1] : '');
-
       const formattedUC = formatarUnidadeCurricular(ucVal);
 
       globalOrder++;
@@ -714,10 +746,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       const processed = processCSVData(jsonData);
 
-      // Etapa de Desduplicação
+      // Desduplicação rigorosa: impede turmas duplicadas no mesmo ambiente/data/turno
       const uniqueAulasMap = new Map<string, Omit<Aula, 'id'>>();
       processed.forEach(aula => {
-        const key = `${aula.data}|${aula.turma}|${aula.instrutor}|${aula.inicio}|${aula.sala}`;
+        const normSala = normalizarNomeAmbiente(aula.sala);
+        const key = `${aula.data}|${aula.turno}|${normSala}`;
         if (!uniqueAulasMap.has(key)) {
           uniqueAulasMap.set(key, aula);
         }
@@ -778,8 +811,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         source: file.name
       }, { merge: true });
 
+      await registrarLog(
+        'IMPORTAR_CSV',
+        'csv',
+        file.name,
+        `Planilha ${file.name} importada com ${uniqueAulas.length} aulas sem duplicidades de ambientes`
+      );
+
       setSyncSource(file.name);
-      alert(`${uniqueAulas.length} aulas sincronizadas com sucesso! O painel será atualizado em tempo real.`);
+      alert(`${uniqueAulas.length} aulas sincronizadas com sucesso! Conflitos e duplicidades de salas foram eliminados.`);
     } catch (e: any) {
       setError(e.message);
       alert("Erro ao processar arquivo: " + e.message);
@@ -790,6 +830,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const updateAula = async (id: string, aula: Partial<Aula>) => {
     try {
+      const aulaAtual = aulas.find(a => a.id === id);
+      const novaSala = aula.sala || aulaAtual?.sala || '';
+      const novaData = aula.data || aulaAtual?.data || '';
+      const novoTurno = aula.turno || (aula.inicio ? calcularTurnoPorHorario(aula.inicio) : aulaAtual?.turno) || 'Matutino';
+
+      const conflito = verificarConflitoAmbiente(novaSala, novaData, novoTurno, id);
+      if (conflito) {
+        const msg = `Conflito no ambiente: O ambiente "${novaSala}" já possui a turma "${conflito.turma}" alocada na data ${novaData} (${novoTurno}). Não é permitido o mesmo ambiente com duas turmas no mesmo horário.`;
+        alert(msg);
+        throw new Error(msg);
+      }
+
       const sanitizedAula = { ...aula };
       if (sanitizedAula.unidade_curricular !== undefined) {
         sanitizedAula.unidade_curricular = formatarUnidadeCurricular(sanitizedAula.unidade_curricular);
@@ -799,24 +851,55 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await updateDoc(aulaDocRef, sanitizedAula);
       const metaDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'sync');
       await setDoc(metaDocRef, { updatedAt: serverTimestamp(), timestamp: Date.now() }, { merge: true });
-    } catch (e) { console.error(e); }
+
+      await registrarLog(
+        'EDITAR_AULA',
+        'aula',
+        id,
+        `Horário/dados alterados para a turma ${sanitizedAula.turma || aulaAtual?.turma} no ambiente ${novaSala}`
+      );
+    } catch (e: any) {
+      console.error(e);
+      throw e;
+    }
   };
 
   const deleteAula = async (id: string) => {
     try {
+      const aula = aulas.find(a => a.id === id);
       const aulaDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas', id);
       await deleteDoc(aulaDocRef);
       const metaDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'sync');
       await setDoc(metaDocRef, { updatedAt: serverTimestamp(), timestamp: Date.now() }, { merge: true });
-    } catch (e) { console.error(e); }
+
+      await registrarLog(
+        'EXCLUIR_AULA',
+        'aula',
+        id,
+        `Aula excluída: Turma ${aula?.turma || ''} no ambiente ${aula?.sala || ''} (${aula?.data || ''} - ${aula?.turno || ''})`
+      );
+    } catch (e) {
+      console.error(e);
+      throw e;
+    }
   };
 
   const addAula = async (aulaData: Omit<Aula, 'id'>) => { 
     try {
+      const turnoCalculado = aulaData.turno || (aulaData.inicio ? calcularTurnoPorHorario(aulaData.inicio) : 'Matutino');
+
+      const conflito = verificarConflitoAmbiente(aulaData.sala, aulaData.data, turnoCalculado);
+      if (conflito) {
+        const msg = `Conflito de ambiente: O ambiente "${aulaData.sala}" já está alocado para a turma "${conflito.turma}" na data ${aulaData.data} (${turnoCalculado}). Não é permitido o mesmo ambiente com duas turmas.`;
+        alert(msg);
+        throw new Error(msg);
+      }
+
       const aulasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
       const formattedUC = formatarUnidadeCurricular(aulaData.unidade_curricular);
       const newAula = {
         ...aulaData,
+        turno: turnoCalculado,
         unidade_curricular: formattedUC,
         titulo: aulaData.turma,
         descricao: formattedUC,
@@ -827,16 +910,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await addDoc(aulasCollectionRef, newAula); 
       const metaDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'sync');
       await setDoc(metaDocRef, { updatedAt: serverTimestamp(), timestamp: Date.now() }, { merge: true });
-    } catch (e) {
+
+      await registrarLog(
+        'CRIAR_AULA',
+        'aula',
+        `${aulaData.turma} - ${aulaData.sala}`,
+        `Aula cadastrada: Turma "${aulaData.turma}" no ambiente "${aulaData.sala}", Instrutor "${aulaData.instrutor}", Data ${aulaData.data} (${turnoCalculado})`
+      );
+    } catch (e: any) {
       console.error("Erro ao adicionar aula:", e);
-      alert("Erro ao salvar no banco.");
+      throw e;
     }
   };
 
   const updateAulasFromCSV = () => {};
 
   const clearAulas = async () => {
-    if(confirm("Limpar todas as aulas?")) {
+    if (confirm("Limpar todas as aulas do cronograma?")) {
         const aulasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
         const currentDocs = await getDocs(aulasCollectionRef);
         const CHUNK_SIZE = 490;
@@ -860,6 +950,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
         const metaDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'sync');
         await setDoc(metaDocRef, { updatedAt: serverTimestamp(), timestamp: Date.now() }, { merge: true });
+
+        await registrarLog('LIMPAR_AULAS', 'aulas', 'todas', 'Todas as aulas do cronograma foram removidas');
     }
   };
 
@@ -881,6 +973,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const aprovarAgendamento = async (id: string, criarAulaAutomatica: boolean = true, aprovador: string = 'Gestor') => {
     try {
+      const agendamento = agendamentos.find(a => a.id === id);
+      if (!agendamento) throw new Error("Agendamento não encontrado.");
+
       const agendamentoDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos', id);
       await updateDoc(agendamentoDocRef, {
         status: 'aprovado',
@@ -888,23 +983,22 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         aprovadoEm: serverTimestamp(),
       });
 
-      // Se solicitado, adiciona automaticamente a aula correspondente no cronograma
       if (criarAulaAutomatica) {
-        const agendamento = agendamentos.find(a => a.id === id);
-        if (agendamento) {
-          const inicioPadrao = agendamento.horarioInicio || (
-            agendamento.turno === 'Matutino' ? '07:00' :
-            agendamento.turno === 'Vespertino' ? '13:00' : '18:00'
-          );
-          const fimPadrao = agendamento.horarioFim || (
-            agendamento.turno === 'Matutino' ? '11:30' :
-            agendamento.turno === 'Vespertino' ? '17:30' : '22:00'
-          );
+        const inicioPadrao = agendamento.horarioInicio || (
+          agendamento.turno === 'Matutino' ? '07:00' :
+          agendamento.turno === 'Vespertino' ? '13:00' : '18:00'
+        );
+        const fimPadrao = agendamento.horarioFim || (
+          agendamento.turno === 'Matutino' ? '11:30' :
+          agendamento.turno === 'Vespertino' ? '17:30' : '22:00'
+        );
 
+        const conflito = verificarConflitoAmbiente(agendamento.sala, agendamento.data, agendamento.turno);
+        if (!conflito) {
           await addAula({
             data: agendamento.data,
             sala: agendamento.sala,
-            turma: agendamento.turma || `Agendamento - ${agendamento.solicitante}`,
+            turma: agendamento.turma || `Reserva - ${agendamento.solicitante}`,
             instrutor: agendamento.solicitante,
             unidade_curricular: agendamento.disciplina || agendamento.motivo || 'Atividade Agendada',
             inicio: inicioPadrao,
@@ -916,19 +1010,37 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       const metaDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'sync');
       await setDoc(metaDocRef, { updatedAt: serverTimestamp(), timestamp: Date.now() }, { merge: true });
-    } catch (e) {
+
+      await registrarLog(
+        'APROVAR_AGENDAMENTO',
+        'agendamento',
+        id,
+        `Reserva de ambiente aprovada por ${aprovador}: Sala ${agendamento.sala} para o professor ${agendamento.solicitante} (${agendamento.data} - ${agendamento.turno})`
+      );
+    } catch (e: any) {
       console.error("Erro ao aprovar agendamento:", e);
-      alert("Erro ao aprovar agendamento.");
+      alert("Erro ao aprovar agendamento: " + (e.message || ''));
     }
   };
 
   const rejeitarAgendamento = async (id: string, motivoRejeicao?: string) => {
     try {
+      const agendamento = agendamentos.find(a => a.id === id);
+      const user = auth.currentUser;
+      const responsavel = user?.email || 'Coordenação';
+
       const agendamentoDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos', id);
       await updateDoc(agendamentoDocRef, {
         status: 'rejeitado',
         motivoRejeicao: motivoRejeicao || 'Não autorizado pela coordenação'
       });
+
+      await registrarLog(
+        'REJEITAR_AGENDAMENTO',
+        'agendamento',
+        id,
+        `Reserva de ambiente rejeitada por ${responsavel}: Sala ${agendamento?.sala || ''} do professor ${agendamento?.solicitante || ''}. Motivo: ${motivoRejeicao || 'Não autorizado'}`
+      );
     } catch (e) {
       console.error("Erro ao rejeitar agendamento:", e);
       alert("Erro ao atualizar agendamento.");
@@ -937,8 +1049,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const excluirAgendamento = async (id: string) => {
     try {
+      const agendamento = agendamentos.find(a => a.id === id);
       const agendamentoDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos', id);
       await deleteDoc(agendamentoDocRef);
+
+      await registrarLog(
+        'EXCLUIR_AGENDAMENTO',
+        'agendamento',
+        id,
+        `Reserva de sala ${agendamento?.sala || ''} para ${agendamento?.solicitante || ''} foi excluída`
+      );
     } catch (e) {
       console.error("Erro ao excluir agendamento:", e);
     }
@@ -950,10 +1070,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       addAula, updateAulasFromCSV, updateAula, deleteAula, 
       clearAulas, addAnuncio, deleteAnuncio, replaceAnuncio, reorderAnuncios, clearAllAnuncios,
       uploadMediaFile, uploadCSV, syncSource,
-      solicitarAgendamento, aprovarAgendamento, rejeitarAgendamento, excluirAgendamento
+      solicitarAgendamento, aprovarAgendamento, rejeitarAgendamento, excluirAgendamento,
+      adicionarAmbiente, excluirAmbiente, registrarLog
     }}>
       {children}
     </DataContext.Provider>
   );
 };
-

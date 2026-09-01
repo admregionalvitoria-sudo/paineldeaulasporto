@@ -27,6 +27,7 @@ export interface Anuncio {
   storagePath?: string;
   duration?: number;
   ordem?: number;
+  ativo?: boolean;
   createdAt?: any;
 }
 
@@ -63,6 +64,7 @@ export interface DataContextType {
   alunos: Aluno[];
   agendamentos: AgendamentoSala[];
   salasCadastradas: string[];
+  ambientesPersonalizados?: string[];
   loading: boolean;
   error: string | null;
   isOffline?: boolean;
@@ -82,6 +84,9 @@ export interface DataContextType {
   aprovarAgendamento: (id: string, criarAulaAutomatica?: boolean, aprovador?: string) => Promise<void>;
   rejeitarAgendamento: (id: string, motivoRejeicao?: string) => Promise<void>;
   excluirAgendamento: (id: string) => Promise<void>;
+  adicionarAmbiente: (nome: string) => Promise<void>;
+  excluirAmbiente: (nome: string) => Promise<void>;
+  registrarLog: (acao: AuditAction, entidadeTipo: string, entidadeId: string, detalhes?: string, antes?: any, depois?: any) => Promise<void>;
 }
 
 export type UserRole = 'admin' | 'midia' | 'super_admin';

@@ -1,220 +1,378 @@
-import React, { useState, useContext } from 'react';
-import { DataContext } from '../context/DataContext';
+import React, { useState, useContext, useRef } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
+import { DataContext, ExtendedDataContextType } from '../context/DataContext';
 import { Anuncio } from '../types';
-import { Image, Video, Trash2, Plus, ArrowLeft, Upload, Clock, Play, Loader2, Layers } from 'lucide-react';
+import { 
+  extractDriveFileId, 
+  isGoogleDriveUrl, 
+  getDrivePreviewUrl, 
+  extractYouTubeId, 
+  getYouTubeEmbedUrl, 
+  isDirectVideoUrl, 
+  detectMediaType,
+  getMediaBadgeInfo
+} from '../utils/mediaHelpers';
+import { 
+  Layers, 
+  ArrowLeft, 
+  UploadCloud, 
+  Plus, 
+  Trash2, 
+  ExternalLink, 
+  Play, 
+  RefreshCw, 
+  Clock, 
+  Image as ImageIcon, 
+  Video as VideoIcon, 
+  Link as LinkIcon,
+  CheckCircle,
+  AlertCircle
+} from 'lucide-react';
 
 interface MediaScreenProps {
   onBack: () => void;
 }
 
 const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
-  const dataContext = useContext(DataContext);
-  const anuncios = dataContext?.anuncios || [];
-  const uploadMediaFile = dataContext?.uploadMediaFile;
-  const addAnuncio = dataContext?.addAnuncio;
-  const deleteAnuncio = dataContext?.deleteAnuncio;
-
-  const [isUploading, setIsUploading] = useState(false);
-  const [newDuration, setNewDuration] = useState(15);
-  const [newName, setNewName] = useState('');
+  const context = useContext(DataContext) as ExtendedDataContextType;
+  const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState<string | null>(null);
+  
+  // URL Input states
+  const [urlInput, setUrlInput] = useState('');
+  const [nameInput, setNameInput] = useState('');
+  const [durationInput, setDurationInput] = useState<number>(10);
   const [previewMedia, setPreviewMedia] = useState<Anuncio | null>(null);
 
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file || !uploadMediaFile || !addAnuncio) return;
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const replaceInputRef = useRef<HTMLInputElement>(null);
+  const targetReplaceAdRef = useRef<{ id: string; storagePath?: string } | null>(null);
 
-    setIsUploading(true);
+  const MAX_MEDIAS = 10;
+  const anuncios = context?.anuncios || [];
+  const isAtLimit = anuncios.length >= MAX_MEDIAS;
+
+  const handleFilesSelected = async (files: FileList | File[]) => {
+    if (!files || files.length === 0) return;
+
+    if (isAtLimit) {
+      alert(`O carrossel já atingiu o limite máximo de ${MAX_MEDIAS} mídias.`);
+      return;
+    }
+
+    setUploading(true);
+    setUploadStatus('Processando e enviando mídias...');
+
     try {
-      const media = await uploadMediaFile(file);
-      await addAnuncio({
-        type: media.type,
-        src: media.src,
-        storagePath: media.storagePath,
-        duration: newDuration,
-        name: newName.trim() || file.name,
-        ativo: true
-      });
-      setNewName('');
+      const fileArray = Array.from(files);
+      const remainingSlots = MAX_MEDIAS - anuncios.length;
+      const filesToProcess = fileArray.slice(0, remainingSlots);
+
+      for (let i = 0; i < filesToProcess.length; i++) {
+        const file = filesToProcess[i];
+        const isVid = file.type.startsWith('video/') || /\.(mp4|webm|mov|ogg)$/i.test(file.name);
+        
+        const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50MB
+        if (isVid && file.size > MAX_VIDEO_SIZE) {
+          const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+          alert(`O vídeo "${file.name}" tem ${sizeMB}MB e excede o limite máximo de 50MB.`);
+          continue;
+        }
+
+        setUploadStatus(`Enviando ${i + 1} de ${filesToProcess.length}: ${file.name}...`);
+        const uploaded = await context.uploadMediaFile(file);
+        
+        const adData: Omit<Anuncio, 'id'> = {
+          src: uploaded.src,
+          type: uploaded.type,
+          name: uploaded.name || file.name,
+          duration: uploaded.type === 'video' ? 60 : 15,
+          ativo: true,
+          ordem: anuncios.length + i
+        };
+        if (uploaded.storagePath) {
+          adData.storagePath = uploaded.storagePath;
+        }
+
+        await context.addAnuncio(adData);
+      }
     } catch (err: any) {
-      alert("Erro ao enviar mídia: " + (err.message || err));
+      console.error("Erro ao enviar mídias:", err);
+      alert("Erro ao salvar mídias: " + (err.message || 'Erro desconhecido'));
     } finally {
-      setIsUploading(false);
+      setUploading(false);
+      setUploadStatus(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+    }
+  };
+
+  const handleAddUrl = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const rawUrl = urlInput.trim();
+    if (!rawUrl) return;
+
+    if (isAtLimit) {
+      alert(`Limite de ${MAX_MEDIAS} mídias atingido.`);
+      return;
+    }
+
+    try {
+      const type = detectMediaType(rawUrl);
+      const isVid = type === 'video';
+
+      const adData: Omit<Anuncio, 'id'> = {
+        src: rawUrl,
+        type,
+        name: nameInput.trim() || (isVid ? 'Vídeo Institucional' : 'Banner Informativo'),
+        duration: isVid ? 60 : (durationInput || 15),
+        ativo: true,
+        ordem: anuncios.length
+      };
+
+      await context.addAnuncio(adData);
+      setUrlInput('');
+      setNameInput('');
+    } catch (err: any) {
+      alert("Erro ao cadastrar link: " + (err.message || 'Erro desconhecido'));
     }
   };
 
   const handleDelete = async (id: string, path?: string) => {
-    if (!confirm("Deseja realmente excluir esta mídia do carrossel?")) return;
-    if (deleteAnuncio) {
-      await deleteAnuncio(id, path);
-    }
+    if (!confirm("Excluir esta mídia do carrossel da TV?")) return;
+    await context.deleteAnuncio(id, path);
   };
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col font-sans">
-      {/* Topbar Header */}
-      <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur-md px-6 py-4 flex items-center justify-between sticky top-0 z-20">
+    <div className="min-h-screen bg-[#EDF1F6] text-[#0F2A52] p-4 sm:p-8 font-sans">
+      {/* Header */}
+      <header className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8 gap-4 max-w-[2000px] mx-auto bg-white p-6 rounded-3xl border border-[#E5E7EB] shadow-xs">
         <div className="flex items-center gap-4">
           <button
             onClick={onBack}
-            className="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors"
+            className="p-2.5 rounded-2xl bg-[#F8FAFC] hover:bg-[#DBEAFE] text-[#0F2A52] border border-[#E5E7EB] transition-all"
+            title="Voltar ao Painel Geral"
           >
             <ArrowLeft className="w-5 h-5" />
           </button>
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-red-500/10 border border-red-500/20 text-red-500 flex items-center justify-center">
-              <Layers className="w-5 h-5" />
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#F4901E]">SENAI • MÍDIAS & TV</span>
+              <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-emerald-50 text-emerald-700 border border-emerald-200">
+                Rotatividade Ativa
+              </span>
             </div>
-            <div>
-              <h1 className="text-lg font-bold text-white tracking-tight">Gestão de Mídia & TV Institucional</h1>
-              <p className="text-xs text-slate-400">Gerencie fotos e vídeos exibidos no painel público da escola</p>
-            </div>
+            <h1 className="text-2xl sm:text-3xl font-black uppercase tracking-tight text-[#0F2A52] mt-1">
+              Gerenciamento de Mídias e Carrossel
+            </h1>
           </div>
         </div>
       </header>
 
       {/* Main Container */}
-      <main className="flex-1 p-6 max-w-7xl w-full mx-auto space-y-8">
-        
-        {/* Upload Form Card */}
-        <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-6 shadow-xl relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-red-600 to-blue-600" />
-          <h2 className="text-base font-bold text-white mb-4 flex items-center gap-2">
-            <Upload className="w-5 h-5 text-red-500" />
-            Adicionar Nova Mídia para a TV
-          </h2>
+      <main className="max-w-[2000px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
+        {/* Coluna Esquerda: Adicionar Mídia (Upload e Link) */}
+        <div className="lg:col-span-4 space-y-6">
+          {/* Card de Upload Direto */}
+          <div className="bg-white p-6 rounded-3xl border border-[#E5E7EB] shadow-lg">
+            <h3 className="text-sm font-black uppercase tracking-wider text-[#0F2A52] mb-2 flex items-center gap-2">
+              <UploadCloud className="w-4 h-4 text-[#F4901E]" />
+              Upload de Arquivo (Foto/Vídeo)
+            </h3>
+            <p className="text-xs text-[#6B7280] mb-4">
+              Envie fotos ou vídeos (até 50MB) para serem armazenados na nuvem e exibidos na TV.
+            </p>
 
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-4">
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                Descrição ou Título
-              </label>
-              <input
-                type="text"
-                placeholder="Ex: Comunicado da Coordenação"
-                value={newName}
-                onChange={(e) => setNewName(e.target.value)}
-                className="w-full px-4 py-2.5 bg-slate-950/60 border border-slate-800 rounded-xl text-white placeholder-slate-600 text-sm focus:outline-none focus:border-red-500"
-              />
-            </div>
+            <input
+              type="file"
+              accept="image/*,video/*"
+              multiple
+              ref={fileInputRef}
+              onChange={(e) => handleFilesSelected(e.target.files || [])}
+              className="hidden"
+            />
 
-            <div>
-              <label className="block text-xs font-semibold uppercase tracking-wider text-slate-400 mb-1.5">
-                Duração na Tela (segundos)
-              </label>
-              <div className="relative">
-                <Clock className="w-4 h-4 absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500" />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading || isAtLimit}
+              className="w-full py-4 px-4 bg-[#0F2A52] hover:bg-[#1D4E8C] text-white font-black uppercase text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+            >
+              <UploadCloud className="w-4 h-4" />
+              <span>{uploading ? (uploadStatus || 'Enviando...') : 'Selecionar Arquivos'}</span>
+            </button>
+          </div>
+
+          {/* Card de Adicionar por Link (Drive / YouTube / Web) */}
+          <div className="bg-white p-6 rounded-3xl border border-[#E5E7EB] shadow-lg">
+            <h3 className="text-sm font-black uppercase tracking-wider text-[#0F2A52] mb-2 flex items-center gap-2">
+              <LinkIcon className="w-4 h-4 text-[#1D4E8C]" />
+              Adicionar por Link Externo
+            </h3>
+            <p className="text-xs text-[#6B7280] mb-4">
+              Suporta links de vídeos do Google Drive (compartilhados como públicos), YouTube ou URLs diretas.
+            </p>
+
+            <form onSubmit={handleAddUrl} className="space-y-4">
+              <div>
+                <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider block mb-1">Título / Descrição</label>
+                <input
+                  type="text"
+                  placeholder="Ex: Vídeo Institucional SENAI 2026"
+                  value={nameInput}
+                  onChange={(e) => setNameInput(e.target.value)}
+                  className="w-full bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider block mb-1">URL / Link *</label>
+                <input
+                  type="url"
+                  required
+                  placeholder="https://drive.google.com/... ou https://youtube.com/..."
+                  value={urlInput}
+                  onChange={(e) => setUrlInput(e.target.value)}
+                  className="w-full bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider block mb-1">Duração de Exibição (segundos)</label>
                 <input
                   type="number"
                   min={5}
                   max={300}
-                  value={newDuration}
-                  onChange={(e) => setNewDuration(Number(e.target.value))}
-                  className="w-full pl-10 pr-4 py-2.5 bg-slate-950/60 border border-slate-800 rounded-xl text-white text-sm focus:outline-none focus:border-red-500"
+                  value={durationInput}
+                  onChange={(e) => setDurationInput(Number(e.target.value))}
+                  className="w-full bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
                 />
               </div>
-            </div>
 
-            <div className="flex items-end">
-              <label className="w-full py-2.5 px-4 bg-gradient-to-r from-red-600 to-red-700 hover:from-red-500 hover:to-red-600 text-white font-semibold rounded-xl shadow-lg shadow-red-900/30 transition-all cursor-pointer flex items-center justify-center gap-2 text-sm">
-                {isUploading ? (
-                  <>
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                    Enviando Mídia...
-                  </>
-                ) : (
-                  <>
-                    <Plus className="w-4 h-4" />
-                    Selecionar Arquivo (Foto/Vídeo)
-                  </>
-                )}
-                <input
-                  type="file"
-                  accept="image/*,video/*"
-                  onChange={handleFileUpload}
-                  disabled={isUploading}
-                  className="hidden"
-                />
-              </label>
-            </div>
+              <button
+                type="submit"
+                disabled={isAtLimit || !urlInput.trim()}
+                className="w-full py-3.5 px-4 bg-[#F4901E] hover:bg-[#E67E22] text-white font-black uppercase text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <Plus className="w-4 h-4" />
+                <span>Salvar Link no Carrossel</span>
+              </button>
+            </form>
           </div>
         </div>
 
-        {/* Galeria de Mídias Cadastradas */}
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-bold uppercase tracking-wider text-slate-400">
-              Mídias em Exibição ({anuncios.length})
-            </h3>
+        {/* Coluna Direita: Lista de Mídias Cadastradas */}
+        <div className="lg:col-span-8 bg-white p-6 sm:p-8 rounded-3xl border border-[#E5E7EB] shadow-lg">
+          <div className="flex items-center justify-between mb-6 pb-4 border-b border-[#E5E7EB]">
+            <div>
+              <h2 className="text-lg font-black uppercase text-[#0F2A52]">Mídias no Carrossel ({anuncios.length} / {MAX_MEDIAS})</h2>
+              <p className="text-xs text-[#6B7280]">Estas mídias alternam automaticamente ao lado dos horários de aula</p>
+            </div>
+            {anuncios.length > 0 && (
+              <button
+                onClick={() => {
+                  if (confirm("Deseja realmente limpar todas as mídias do carrossel?")) {
+                    context.clearAllAnuncios();
+                  }
+                }}
+                className="text-xs font-bold text-red-600 hover:bg-red-50 px-3 py-1.5 rounded-xl border border-red-200 transition-all"
+              >
+                Limpar Todas
+              </button>
+            )}
           </div>
 
-          {anuncios.length === 0 ? (
-            <div className="py-16 text-center text-slate-500 bg-slate-900/40 rounded-2xl border border-slate-800 p-8">
-              Nenhuma mídia cadastrada no momento. Adicione imagens ou vídeos acima para exibição no carrossel da TV.
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6">
-              {anuncios.map((ad) => (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {anuncios.map((ad, index) => {
+              const isYT = isGoogleDriveUrl(ad.src) ? false : !!extractYouTubeId(ad.src);
+              const isDrive = isGoogleDriveUrl(ad.src);
+              const isVid = ad.type === 'video' || isYT || isDrive;
+              const badge = getMediaBadgeInfo(ad.src, ad.type);
+
+              return (
                 <div
                   key={ad.id}
-                  className="bg-slate-900/90 rounded-2xl border border-slate-800/80 overflow-hidden shadow-lg hover:border-slate-700 transition-all flex flex-col group"
+                  className="bg-[#F8FAFC] rounded-2xl border border-[#E5E7EB] overflow-hidden p-4 flex flex-col justify-between hover:shadow-md transition-all"
                 >
-                  <div className="relative aspect-video bg-slate-950 flex items-center justify-center overflow-hidden">
-                    {ad.type === 'video' ? (
-                      <video src={ad.src} className="w-full h-full object-cover" muted loop />
-                    ) : (
-                      <img src={ad.src} alt={ad.name || 'Mídia'} className="w-full h-full object-cover" />
-                    )}
-
-                    <div className="absolute top-3 left-3 px-2.5 py-1 rounded-lg bg-slate-950/80 backdrop-blur-md border border-slate-800 text-xs font-semibold flex items-center gap-1.5">
-                      {ad.type === 'video' ? <Video className="w-3.5 h-3.5 text-blue-400" /> : <Image className="w-3.5 h-3.5 text-emerald-400" />}
-                      <span className="capitalize">{ad.type}</span>
+                  <div className="flex gap-3">
+                    {/* Thumbnail */}
+                    <div className="w-28 h-20 rounded-xl bg-[#0A192F] overflow-hidden shrink-0 relative flex items-center justify-center border border-[#CBD5E1]">
+                      {isYT ? (
+                        <div className="w-full h-full bg-red-900 flex flex-col items-center justify-center text-white">
+                          <Play className="w-6 h-6 text-red-400" />
+                          <span className="text-[8px] font-black text-red-300">YouTube</span>
+                        </div>
+                      ) : isDrive ? (
+                        <div className="w-full h-full bg-amber-900 flex flex-col items-center justify-center text-white">
+                          <Play className="w-6 h-6 text-amber-300" />
+                          <span className="text-[8px] font-black text-amber-200">Drive Vídeo</span>
+                        </div>
+                      ) : ad.type === 'video' ? (
+                        <video src={ad.src} className="w-full h-full object-cover" muted />
+                      ) : (
+                        <img src={ad.src} alt={ad.name || 'Mídia'} className="w-full h-full object-cover" />
+                      )}
+                      <div className="absolute bottom-1 right-1 px-1 py-0.5 rounded bg-black/80 text-[8px] font-black text-white">
+                        {ad.duration || 15}s
+                      </div>
                     </div>
 
-                    <div className="absolute top-3 right-3 px-2.5 py-1 rounded-lg bg-slate-950/80 backdrop-blur-md border border-slate-800 text-xs font-mono flex items-center gap-1 text-slate-300">
-                      <Clock className="w-3 h-3 text-slate-400" />
-                      {ad.duration || 15}s
+                    {/* Info */}
+                    <div className="flex-1 min-w-0">
+                      <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase border ${badge.color}`}>
+                        {badge.label}
+                      </span>
+                      <h4 className="text-xs font-black text-[#0F2A52] truncate mt-1">
+                        {ad.name || 'Mídia sem título'}
+                      </h4>
+                      <p className="text-[10px] text-[#6B7280] font-mono truncate mt-0.5">
+                        {ad.src}
+                      </p>
                     </div>
                   </div>
 
-                  <div className="p-4 flex-1 flex flex-col justify-between">
-                    <div>
-                      <h4 className="text-sm font-semibold text-white truncate">{ad.name || 'Sem título'}</h4>
-                    </div>
+                  {/* Actions */}
+                  <div className="mt-4 pt-3 border-t border-[#E2E8F0] flex items-center justify-between">
+                    <button
+                      onClick={() => setPreviewMedia(ad)}
+                      className="text-xs font-bold text-[#1D4E8C] hover:underline flex items-center gap-1"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      Visualizar
+                    </button>
 
-                    <div className="mt-4 pt-3 border-t border-slate-800/80 flex items-center justify-between">
-                      <button
-                        onClick={() => setPreviewMedia(ad)}
-                        className="text-xs text-slate-400 hover:text-white flex items-center gap-1 transition-colors"
-                      >
-                        <Play className="w-3.5 h-3.5" />
-                        Visualizar
-                      </button>
-
-                      <button
-                        onClick={() => handleDelete(ad.id, ad.storagePath)}
-                        className="p-1.5 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg transition-colors"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
+                    <button
+                      onClick={() => handleDelete(ad.id, ad.storagePath)}
+                      className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
+                      title="Excluir Mídia"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
+              );
+            })}
+
+            {anuncios.length === 0 && (
+              <div className="col-span-2 py-16 text-center text-xs font-bold text-[#6B7280] border-2 border-dashed border-[#CBD5E1] rounded-2xl">
+                Nenhuma mídia cadastrada no carrossel. Use o painel ao lado para enviar arquivos ou cadastrar links.
+              </div>
+            )}
+          </div>
         </div>
       </main>
 
-      {/* Modal de Pré-visualização */}
+      {/* Modal Preview */}
       {previewMedia && (
-        <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-lg flex items-center justify-center p-4">
-          <div className="max-w-4xl w-full bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden relative shadow-2xl">
-            <button
-              onClick={() => setPreviewMedia(null)}
-              className="absolute top-4 right-4 z-10 px-3 py-1.5 rounded-xl bg-slate-950/80 text-white text-xs font-medium border border-slate-800 hover:bg-slate-800"
-            >
-              Fechar Preview
-            </button>
+        <div className="fixed inset-0 z-50 bg-[#0F2A52]/80 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="max-w-3xl w-full bg-white border border-[#E5E7EB] rounded-3xl overflow-hidden shadow-2xl relative">
+            <div className="p-4 border-b border-[#E5E7EB] flex items-center justify-between">
+              <h3 className="text-sm font-black uppercase text-[#0F2A52]">{previewMedia.name || 'Preview da Mídia'}</h3>
+              <button
+                onClick={() => setPreviewMedia(null)}
+                className="px-3 py-1 bg-[#F8FAFC] hover:bg-[#E2E8F0] rounded-xl text-xs font-bold text-[#0F2A52]"
+              >
+                Fechar
+              </button>
+            </div>
             <div className="aspect-video bg-black flex items-center justify-center">
               {previewMedia.type === 'video' ? (
                 <video src={previewMedia.src} controls autoPlay className="max-h-full max-w-full" />
