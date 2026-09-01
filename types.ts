@@ -89,7 +89,7 @@ export interface DataContextType {
   registrarLog: (acao: AuditAction, entidadeTipo: string, entidadeId: string, detalhes?: string, antes?: any, depois?: any) => Promise<void>;
 }
 
-export type UserRole = 'admin' | 'midia' | 'super_admin';
+export type UserRole = 'super_admin' | 'admin' | 'coordenador' | 'comunicacao' | 'midia';
 
 export interface UserProfile {
   uid: string;

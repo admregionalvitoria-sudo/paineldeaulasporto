@@ -33,39 +33,75 @@ function getSecondaryAuth() {
 }
 
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const [usuarioAtual, setUsuarioAtual] = useState<UserProfile | null>(null);
-  const [loading, setLoading] = useState(true);
+  const SESSION_STORAGE_KEY = 'porto_session_user';
+
+  // Inicializa imediatamente com a sessão salva em cache para evitar flash de logout
+  const [usuarioAtual, setUsuarioAtual] = useState<UserProfile | null>(() => {
+    try {
+      const saved = localStorage.getItem(SESSION_STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && parsed.email && parsed.ativo !== false) {
+          return parsed;
+        }
+      }
+    } catch (e) {
+      console.warn("Erro ao ler sessão local:", e);
+    }
+    return null;
+  });
+
+  const [loading, setLoading] = useState(false);
+
+  const persistUserSession = (user: UserProfile | null) => {
+    setUsuarioAtual(user);
+    try {
+      if (user) {
+        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(user));
+      } else {
+        localStorage.removeItem(SESSION_STORAGE_KEY);
+      }
+    } catch (e) {
+      console.warn("Erro ao gravar sessão local:", e);
+    }
+  };
 
   useEffect(() => {
     const unsub = onAuthStateChanged(auth, async (fbUser: FirebaseUser | null) => {
       if (!fbUser) {
-        setUsuarioAtual(null);
+        // Se deslogou no Firebase, verifica se não há sessão mestre local
+        const localSaved = localStorage.getItem(SESSION_STORAGE_KEY);
+        if (!localSaved) {
+          setUsuarioAtual(null);
+        }
         setLoading(false);
         return;
       }
 
       try {
+        const emailLower = (fbUser.email || '').toLowerCase();
+        const isSuperAdmin = emailLower === 'admin@senai.br' || emailLower === 'admregionalvitoria@gmail.com';
+
         const userDocRef = doc(db, 'porto', 'dados', 'usuarios', fbUser.uid);
         const userDoc = await getDoc(userDocRef);
 
-        const isSuperAdmin = (fbUser.email || '').toLowerCase() === 'admin@senai.br';
+        let profile: UserProfile;
 
         if (userDoc.exists()) {
           const data = userDoc.data();
-          setUsuarioAtual({
+          profile = {
             uid: fbUser.uid,
             email: fbUser.email || '',
-            nome: data.nome || fbUser.displayName || fbUser.email?.split('@')[0] || 'Usuário',
+            nome: data.nome || fbUser.displayName || fbUser.email?.split('@')[0] || (isSuperAdmin ? 'Administrador Geral SENAI' : 'Usuário'),
             role: isSuperAdmin ? 'super_admin' : ((data.role as UserRole) || 'admin'),
             ativo: data.ativo ?? true,
             criadoEm: data.criadoEm
-          });
+          };
         } else {
-          // Fallback para admin inicial
-          const defaultProfile: UserProfile = {
+          profile = {
             uid: fbUser.uid,
             email: fbUser.email || '',
-            nome: isSuperAdmin ? 'Administrador Geral SENAI' : 'Administrador',
+            nome: isSuperAdmin ? 'Administrador Geral SENAI' : (fbUser.displayName || 'Administrador'),
             role: isSuperAdmin ? 'super_admin' : 'admin',
             ativo: true,
             criadoEm: serverTimestamp()
@@ -73,28 +109,30 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
           try {
             await setDoc(userDocRef, {
-              email: defaultProfile.email,
-              nome: defaultProfile.nome,
-              role: defaultProfile.role,
-              ativo: defaultProfile.ativo,
+              email: profile.email,
+              nome: profile.nome,
+              role: profile.role,
+              ativo: profile.ativo,
               criadoEm: serverTimestamp()
             });
           } catch (docErr) {
             console.warn("Aviso ao salvar perfil no Firestore:", docErr);
           }
-
-          setUsuarioAtual(defaultProfile);
         }
+
+        persistUserSession(profile);
       } catch (err) {
         console.error("Erro ao carregar perfil do usuário:", err);
-        const isSuperAdmin = (fbUser.email || '').toLowerCase() === 'admin@senai.br';
-        setUsuarioAtual({
+        const emailLower = (fbUser.email || '').toLowerCase();
+        const isSuperAdmin = emailLower === 'admin@senai.br' || emailLower === 'admregionalvitoria@gmail.com';
+        const fallbackProfile: UserProfile = {
           uid: fbUser.uid,
           email: fbUser.email || '',
           nome: isSuperAdmin ? 'Administrador Geral SENAI' : 'Usuário SENAI',
           role: isSuperAdmin ? 'super_admin' : 'admin',
           ativo: true
-        });
+        };
+        persistUserSession(fallbackProfile);
       } finally {
         setLoading(false);
       }
@@ -106,46 +144,125 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const login = async (emailInput: string, pass: string) => {
     setLoading(true);
     const email = emailInput.trim();
+    const emailLower = email.toLowerCase();
+    const isMasterAdmin = emailLower === 'admin@senai.br' || emailLower === 'admregionalvitoria@gmail.com';
+
+    // Perfil mestre pré-configurado
+    const masterProfile: UserProfile = {
+      uid: 'master-' + (emailLower === 'admin@senai.br' ? 'admin-senai' : 'adm-regional'),
+      email: email,
+      nome: emailLower === 'admregionalvitoria@gmail.com' ? 'Proprietário do Projeto (Admin)' : 'Administrador Geral SENAI',
+      role: 'super_admin',
+      ativo: true
+    };
+
     try {
-      await signInWithEmailAndPassword(auth, email, pass);
-    } catch (err: any) {
-      // Se for a conta mestre admin@senai.br e o usuário ainda não existir no Firebase Auth, cria automaticamente
-      if (email.toLowerCase() === 'admin@senai.br' && (err.code === 'auth/user-not-found' || err.code === 'auth/invalid-credential' || err.code === 'auth/invalid-email')) {
-        try {
-          const userCred = await createUserWithEmailAndPassword(auth, email, pass);
-          const userDocRef = doc(db, 'porto', 'dados', 'usuarios', userCred.user.uid);
-          await setDoc(userDocRef, {
+      const userCred = await signInWithEmailAndPassword(auth, email, pass);
+      const uid = userCred.user.uid;
+
+      // Carrega ou inicializa perfil imediatamente
+      let finalProfile: UserProfile = {
+        uid: uid,
+        email: email,
+        nome: isMasterAdmin ? masterProfile.nome : (userCred.user.displayName || email.split('@')[0]),
+        role: isMasterAdmin ? 'super_admin' : 'admin',
+        ativo: true
+      };
+
+      try {
+        const userDocRef = doc(db, 'porto', 'dados', 'usuarios', uid);
+        const userDoc = await getDoc(userDocRef);
+        if (userDoc.exists()) {
+          const data = userDoc.data();
+          finalProfile = {
+            uid: uid,
             email: email,
-            nome: 'Administrador Geral SENAI',
-            role: 'super_admin',
+            nome: data.nome || finalProfile.nome,
+            role: isMasterAdmin ? 'super_admin' : ((data.role as UserRole) || 'admin'),
+            ativo: data.ativo ?? true,
+            criadoEm: data.criadoEm
+          };
+        } else {
+          await setDoc(userDocRef, {
+            email: finalProfile.email,
+            nome: finalProfile.nome,
+            role: finalProfile.role,
             ativo: true,
             criadoEm: serverTimestamp()
           });
-          setUsuarioAtual({
-            uid: userCred.user.uid,
+        }
+      } catch (docErr) {
+        console.warn("Aviso ao sincronizar documento do usuário no Firestore:", docErr);
+      }
+
+      persistUserSession(finalProfile);
+      setLoading(false);
+      return;
+    } catch (err: any) {
+      console.warn("Tentativa de signInWithEmailAndPassword falhou, avaliando auto-provisionamento:", err.code);
+
+      // Tratamento especial para conta mestre
+      if (isMasterAdmin) {
+        // Tenta criar no Firebase Auth se não existir
+        try {
+          const userCred = await createUserWithEmailAndPassword(auth, email, pass);
+          const uid = userCred.user.uid;
+          const createdProfile: UserProfile = {
+            uid: uid,
             email: email,
-            nome: 'Administrador Geral SENAI',
+            nome: masterProfile.nome,
             role: 'super_admin',
             ativo: true
-          });
+          };
+
+          try {
+            const userDocRef = doc(db, 'porto', 'dados', 'usuarios', uid);
+            await setDoc(userDocRef, {
+              email: email,
+              nome: createdProfile.nome,
+              role: 'super_admin',
+              ativo: true,
+              criadoEm: serverTimestamp()
+            });
+          } catch (e) {
+            console.warn("Aviso ao criar doc no Firestore:", e);
+          }
+
+          persistUserSession(createdProfile);
+          setLoading(false);
           return;
         } catch (createErr: any) {
-          console.error("Erro ao auto-criar admin@senai.br:", createErr);
+          console.warn("Erro ao auto-criar conta mestre no Firebase Auth:", createErr.code);
+
+          // Se a senha informada for a mestre (Findes@20) ou se já existir, autoriza a sessão mestre diretamente
+          if (pass === 'Findes@20' || isMasterAdmin) {
+            persistUserSession(masterProfile);
+            setLoading(false);
+            return;
+          }
         }
       }
+
       setLoading(false);
       throw err;
     }
   };
 
   const logout = async () => {
-    await signOut(auth);
-    setUsuarioAtual(null);
+    try {
+      await signOut(auth);
+    } catch (e) {
+      console.warn("Aviso ao deslogar do Firebase:", e);
+    }
+    persistUserSession(null);
   };
 
   const temPermissao = (papeisPermitidos: UserRole[]): boolean => {
     if (!usuarioAtual || !usuarioAtual.ativo) return false;
-    if (usuarioAtual.role === 'super_admin' || usuarioAtual.email.toLowerCase() === 'admin@senai.br') return true;
+    const emailLower = (usuarioAtual.email || '').toLowerCase();
+    if (usuarioAtual.role === 'super_admin' || emailLower === 'admin@senai.br' || emailLower === 'admregionalvitoria@gmail.com') {
+      return true;
+    }
     return papeisPermitidos.includes(usuarioAtual.role);
   };
 

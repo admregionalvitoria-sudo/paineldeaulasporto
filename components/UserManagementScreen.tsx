@@ -81,7 +81,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
 
       // 2. Fallback client-side usando o SecondaryAuthApp no AuthContext
       if (!created && criarUsuario) {
-        await criarUsuario(email.trim(), password, nome.trim(), role);
+        await criarUsuario(nome.trim(), email.trim(), password, role);
         created = true;
       }
 
