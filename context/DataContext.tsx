@@ -3,6 +3,7 @@ import { upload as vercelBlobUpload } from '@vercel/blob/client';
 import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType, AuditAction } from '../types';
 import { db, storage, auth } from '../firebase';
 import { formatarUnidadeCurricular } from '../utils/curricularUnits';
+import { formatarNomeSala, CANONICAL_SALAS } from '../utils/roomFormatter';
 import { uploadToCloudinary } from '../utils/cloudinary';
 import { 
   collection, 
@@ -198,12 +199,21 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const salasCadastradas = useMemo(() => {
     const salasMap = new Map<string, string>(); // normalizado -> nome formatado
 
+    // 0. Salas canônicas e oficiais do SENAI Porto
+    CANONICAL_SALAS.forEach(sala => {
+      const norm = normalizarNomeAmbiente(sala);
+      if (!salasMap.has(norm)) {
+        salasMap.set(norm, sala);
+      }
+    });
+
     // 1. Ambientes personalizados
     ambientesPersonalizados.forEach(item => {
       if (item.nome && item.nome.trim()) {
-        const norm = normalizarNomeAmbiente(item.nome);
+        const formatado = formatarNomeSala(item.nome);
+        const norm = normalizarNomeAmbiente(formatado);
         if (!salasMap.has(norm)) {
-          salasMap.set(norm, item.nome.trim());
+          salasMap.set(norm, formatado);
         }
       }
     });
@@ -211,9 +221,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // 2. Salas das aulas
     aulas.forEach(a => {
       if (a.sala && a.sala.trim()) {
-        const norm = normalizarNomeAmbiente(a.sala);
+        const formatado = formatarNomeSala(a.sala);
+        const norm = normalizarNomeAmbiente(formatado);
         if (!salasMap.has(norm)) {
-          salasMap.set(norm, a.sala.trim());
+          salasMap.set(norm, formatado);
         }
       }
     });
@@ -221,9 +232,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     // 3. Salas dos agendamentos
     agendamentos.forEach(ag => {
       if (ag.sala && ag.sala.trim()) {
-        const norm = normalizarNomeAmbiente(ag.sala);
+        const formatado = formatarNomeSala(ag.sala);
+        const norm = normalizarNomeAmbiente(formatado);
         if (!salasMap.has(norm)) {
-          salasMap.set(norm, ag.sala.trim());
+          salasMap.set(norm, formatado);
         }
       }
     });
@@ -323,12 +335,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const aulasData = snapshot.docs.map(docSnap => {
         const d = docSnap.data();
         const formattedUC = formatarUnidadeCurricular(d.unidade_curricular);
+        const formattedSala = formatarNomeSala(d.sala) || d.sala || '';
         
-        if (d.unidade_curricular !== formattedUC && navigator.onLine) {
+        if ((d.unidade_curricular !== formattedUC || (formattedSala && d.sala !== formattedSala)) && navigator.onLine) {
           batchUpdates.push(
             updateDoc(docSnap.ref, { 
               unidade_curricular: formattedUC, 
-              descricao: formattedUC 
+              descricao: formattedUC,
+              sala: formattedSala
             }).catch(() => {})
           );
         }
@@ -336,7 +350,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         return {
           ...d,
           id: docSnap.id,
-          unidade_curricular: formattedUC
+          unidade_curricular: formattedUC,
+          sala: formattedSala
         };
       }) as Aula[];
       const currentHash = aulasData.map(a => `${a.id}_${a.turma}_${a.sala}_${a.inicio}_${a.unidade_curricular}`).join('|');
@@ -719,11 +734,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const startTime = inicios[0];
       const endTime = fins.length > 0 ? fins[fins.length - 1] : (inicios.length > 1 ? inicios[inicios.length - 1] : '');
       const formattedUC = formatarUnidadeCurricular(ucVal);
+      const formattedSala = formatarNomeSala(salaVal) || salaVal;
 
       globalOrder++;
       return [{
         data: dataVal,
-        sala: salaVal,
+        sala: formattedSala,
         turma: turmaVal,
         instrutor: instrutorVal,
         unidade_curricular: formattedUC,
@@ -845,7 +861,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const updateAula = async (id: string, aula: Partial<Aula>) => {
     try {
       const aulaAtual = aulas.find(a => a.id === id);
-      const novaSala = aula.sala || aulaAtual?.sala || '';
+      const novaSala = formatarNomeSala(aula.sala || aulaAtual?.sala || '');
       const novaData = aula.data || aulaAtual?.data || '';
       const novoTurno = aula.turno || (aula.inicio ? calcularTurnoPorHorario(aula.inicio) : aulaAtual?.turno) || 'Matutino';
 
@@ -857,6 +873,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
 
       const sanitizedAula = { ...aula };
+      if (sanitizedAula.sala) {
+        sanitizedAula.sala = formatarNomeSala(sanitizedAula.sala);
+      }
       if (sanitizedAula.unidade_curricular !== undefined) {
         sanitizedAula.unidade_curricular = formatarUnidadeCurricular(sanitizedAula.unidade_curricular);
         sanitizedAula.descricao = sanitizedAula.unidade_curricular;
@@ -900,11 +919,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const addAula = async (aulaData: Omit<Aula, 'id'>) => { 
     try {
+      const formattedSala = formatarNomeSala(aulaData.sala) || aulaData.sala;
       const turnoCalculado = aulaData.turno || (aulaData.inicio ? calcularTurnoPorHorario(aulaData.inicio) : 'Matutino');
 
-      const conflito = verificarConflitoAmbiente(aulaData.sala, aulaData.data, turnoCalculado);
+      const conflito = verificarConflitoAmbiente(formattedSala, aulaData.data, turnoCalculado);
       if (conflito) {
-        const msg = `Conflito de ambiente: O ambiente "${aulaData.sala}" já está alocado para a turma "${conflito.turma}" na data ${aulaData.data} (${turnoCalculado}). Não é permitido o mesmo ambiente com duas turmas.`;
+        const msg = `Conflito de ambiente: O ambiente "${formattedSala}" já está alocado para a turma "${conflito.turma}" na data ${aulaData.data} (${turnoCalculado}). Não é permitido o mesmo ambiente com duas turmas.`;
         alert(msg);
         throw new Error(msg);
       }
@@ -913,6 +933,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const formattedUC = formatarUnidadeCurricular(aulaData.unidade_curricular);
       const newAula = {
         ...aulaData,
+        sala: formattedSala,
         turno: turnoCalculado,
         unidade_curricular: formattedUC,
         titulo: aulaData.turma,
@@ -974,6 +995,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const agendamentosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos');
       const docRef = await addDoc(agendamentosCollectionRef, {
         ...dados,
+        sala: formatarNomeSala(dados.sala) || dados.sala,
         status: 'pendente',
         criadoEm: serverTimestamp(),
         timestamp: Date.now()

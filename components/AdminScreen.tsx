@@ -4,7 +4,7 @@ import { DataContext, ExtendedDataContextType, normalizarNomeAmbiente } from '..
 import { useAuth } from '../context/AuthContext';
 import { Aula, AgendamentoSala } from '../types';
 import { formatarUnidadeCurricular, CANONICAL_UNIDADES_CURRICULARES } from '../utils/curricularUnits';
-import { formatarNomeSala } from '../utils/roomFormatter';
+import { formatarNomeSala, CANONICAL_SALAS } from '../utils/roomFormatter';
 import { 
   Building, 
   Calendar, 
@@ -65,7 +65,7 @@ const EditModal: React.FC<{
             <h2 className="text-xl font-black uppercase tracking-wider text-[#0F2A52]">Editar Horário da Aula</h2>
             <p className="text-xs text-[#6B7280]">Turma {aula.turma} • {aula.sala}</p>
           </div>
-          <button onClick={onClose} className="p-2 hover:bg-[#DBEAFE] rounded-full transition-all text-[#6B7280]">
+          <button onClick={onClose} className="p-2 hover:bg-[#DBEAFE] rounded-full transition-all text-[#6B7280] cursor-pointer">
             <XCircle className="w-6 h-6" />
           </button>
         </div>
@@ -78,6 +78,12 @@ const EditModal: React.FC<{
         )}
 
         <form onSubmit={handleSubmit} className="grid grid-cols-1 md:grid-cols-2 gap-4 max-h-[65vh] overflow-y-auto pr-1">
+          <datalist id="canonical-salas-list">
+            {CANONICAL_SALAS.map((sala, i) => (
+              <option key={i} value={sala} />
+            ))}
+          </datalist>
+
           <datalist id="canonical-uc-list">
             {CANONICAL_UNIDADES_CURRICULARES.map((uc, i) => (
               <option key={i} value={uc} />
@@ -98,9 +104,10 @@ const EditModal: React.FC<{
             <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider">Ambiente / Sala *</label>
             <input 
               required
+              list="canonical-salas-list"
               value={formData.sala}
               onChange={e => setFormData({ ...formData, sala: e.target.value })}
-              placeholder="Ex: LAB 04"
+              placeholder="Ex: Sala de Aula 01 — Espaço Definição — Sala Estruturar"
               className="bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
             />
           </div>
