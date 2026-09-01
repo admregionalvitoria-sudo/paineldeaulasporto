@@ -3,17 +3,18 @@ import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
 import { UserProfile, UserRole } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { Users, UserPlus, Shield, ArrowLeft, CheckCircle, AlertTriangle, Trash2, Key } from 'lucide-react';
+import { Users, UserPlus, Shield, ArrowLeft, CheckCircle, AlertTriangle, Trash2, Key, ExternalLink, Info, Loader2 } from 'lucide-react';
 
 interface UserManagementScreenProps {
   onBack: () => void;
 }
 
 const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) => {
-  const { usuarioAtual, criarUsuario } = useAuth();
+  const { usuarioAtual, criarUsuario, excluirUsuario } = useAuth();
   const [usuarios, setUsuarios] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
+  const [deletingUid, setDeletingUid] = useState<string | null>(null);
 
   // Form states
   const [nome, setNome] = useState('');
@@ -97,12 +98,48 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
     } catch (err: any) {
       console.error("Erro ao criar usuário:", err);
       let msg = err.message || 'Erro ao cadastrar usuário.';
-      if (err.code === 'auth/email-already-in-use') {
+      if (err.code === 'auth/operation-not-allowed' || msg.includes('operation-not-allowed') || msg.includes('E-mail/Senha')) {
+        msg = "O provedor 'E-mail/Senha' está desativado no Firebase Console. Para criar contas com e-mail/senha, acesse o Firebase Console > Authentication > Sign-in method e ative a opção 'E-mail/senha'.";
+      } else if (err.code === 'auth/email-already-in-use') {
         msg = 'Este e-mail já está cadastrado no sistema.';
+      } else if (err.code === 'auth/invalid-email') {
+        msg = 'O formato do e-mail informado é inválido.';
+      } else if (err.code === 'auth/weak-password') {
+        msg = 'A senha informada é muito fraca. Use no mínimo 6 caracteres.';
       }
       setError(msg);
     } finally {
       setIsCreating(false);
+    }
+  };
+
+  const handleDeleteUser = async (user: UserProfile) => {
+    const isMaster = user.email === 'admin@senai.br' || user.email === 'admregionalvitoria@gmail.com';
+    if (isMaster) {
+      alert('A conta de administrador mestre não pode ser excluída.');
+      return;
+    }
+    if (user.uid === usuarioAtual?.uid) {
+      alert('Você não pode excluir sua própria conta enquanto estiver conectado com ela.');
+      return;
+    }
+
+    if (!window.confirm(`Tem certeza que deseja excluir o usuário "${user.nome || user.email}"? Esta ação removerá o acesso permanentemente.`)) {
+      return;
+    }
+
+    setDeletingUid(user.uid);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      await excluirUsuario(user.uid);
+      setSuccess(`Usuário ${user.email} excluído com sucesso!`);
+    } catch (err: any) {
+      console.error("Erro ao excluir usuário:", err);
+      setError(err.message || 'Erro ao excluir usuário.');
+    } finally {
+      setDeletingUid(null);
     }
   };
 
@@ -124,7 +161,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
         <div className="flex items-center gap-4">
           <button
             onClick={onBack}
-            className="p-2.5 rounded-2xl bg-[#F8FAFC] hover:bg-[#DBEAFE] text-[#0F2A52] border border-[#E5E7EB] transition-all"
+            className="p-2.5 rounded-2xl bg-[#F8FAFC] hover:bg-[#DBEAFE] text-[#0F2A52] border border-[#E5E7EB] transition-all cursor-pointer"
             title="Voltar ao Painel Geral"
           >
             <ArrowLeft className="w-5 h-5" />
@@ -133,7 +170,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
             <div className="flex items-center gap-2">
               <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#F4901E]">SENAI • CONTROLE DE ACESSO</span>
               <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-50 text-[#0F2A52] border border-blue-200">
-                {usuarios.length} Usuários Ativos
+                {usuarios.length} Usuários Cadastrados
               </span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-black uppercase tracking-tight text-[#0F2A52] mt-1">
@@ -156,9 +193,23 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
           </p>
 
           {error && (
-            <div className="mb-4 p-3 rounded-xl bg-red-50 border border-red-200 text-red-600 text-xs font-bold flex items-center gap-2">
-              <AlertTriangle className="w-4 h-4 shrink-0" />
-              <span>{error}</span>
+            <div className="mb-6 p-4 rounded-2xl bg-red-50 border border-red-200 text-red-700 text-xs font-semibold flex flex-col gap-2">
+              <div className="flex items-center gap-2 font-bold text-red-800">
+                <AlertTriangle className="w-4 h-4 shrink-0 text-red-600" />
+                <span>Atenção</span>
+              </div>
+              <p className="leading-relaxed">{error}</p>
+              {error.includes('Firebase Console') && (
+                <a
+                  href="https://console.firebase.google.com/project/paineldeaulas-e34da/authentication/providers"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-700 hover:underline mt-1"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  Abrir Métodos de Login no Firebase Console
+                </a>
+              )}
             </div>
           )}
 
@@ -175,7 +226,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
               <input
                 type="text"
                 required
-                placeholder="Ex: Roberto Almeida"
+                placeholder="Ex: Vitor Porto"
                 value={nome}
                 onChange={(e) => setNome(e.target.value)}
                 className="w-full bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
@@ -187,7 +238,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
               <input
                 type="email"
                 required
-                placeholder="usuario@senai.br"
+                placeholder="vitor.porto@findes.org.br"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 className="w-full bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
@@ -222,9 +273,9 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
             <button
               type="submit"
               disabled={isCreating}
-              className="w-full py-4 px-4 bg-[#F4901E] hover:bg-[#E67E22] text-white font-black uppercase text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50 mt-4"
+              className="w-full py-4 px-4 bg-[#F4901E] hover:bg-[#E67E22] text-white font-black uppercase text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50 mt-4 cursor-pointer"
             >
-              <UserPlus className="w-4 h-4" />
+              {isCreating ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
               <span>{isCreating ? 'Cadastrando...' : 'Criar Usuário'}</span>
             </button>
           </form>
@@ -240,44 +291,72 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
           </div>
 
           <div className="space-y-3">
-            {usuarios.map((user) => (
-              <div
-                key={user.uid}
-                className="p-4 rounded-2xl bg-[#F8FAFC] border border-[#E5E7EB] flex items-center justify-between gap-4 hover:shadow-xs transition-all"
-              >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-xl bg-[#0F2A52] text-white flex items-center justify-center font-black text-sm">
-                    {(user.nome || user.email).charAt(0).toUpperCase()}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <h4 className="text-xs font-black text-[#0F2A52]">{user.nome || 'Usuário'}</h4>
-                      <span className="px-2 py-0.5 rounded text-[8px] font-black uppercase bg-blue-100 text-[#0F2A52]">
-                        {user.role}
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-[#6B7280] font-mono">{user.email}</p>
-                  </div>
-                </div>
+            {usuarios.map((user) => {
+              const isMaster = user.email === 'admin@senai.br' || user.email === 'admregionalvitoria@gmail.com';
+              const isSelf = user.uid === usuarioAtual?.uid;
+              const isDeleting = deletingUid === user.uid;
 
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => toggleUserStatus(user)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors ${
-                      user.ativo !== false
-                        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                        : 'bg-red-50 text-red-600 border border-red-200'
-                    }`}
-                  >
-                    {user.ativo !== false ? 'Ativo' : 'Inativo'}
-                  </button>
+              return (
+                <div
+                  key={user.uid}
+                  className="p-4 rounded-2xl bg-[#F8FAFC] border border-[#E5E7EB] flex items-center justify-between gap-4 hover:shadow-xs transition-all"
+                >
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 rounded-xl bg-[#0F2A52] text-white flex items-center justify-center font-black text-sm shrink-0">
+                      {(user.nome || user.email || 'U').charAt(0).toUpperCase()}
+                    </div>
+                    <div className="truncate">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <h4 className="text-xs font-black text-[#0F2A52] truncate">{user.nome || 'Usuário'}</h4>
+                        <span className={`px-2 py-0.5 rounded text-[8px] font-black uppercase ${
+                          isMaster ? 'bg-amber-100 text-amber-900 border border-amber-300' : 'bg-blue-100 text-[#0F2A52]'
+                        }`}>
+                          {isMaster ? 'Super Admin' : user.role}
+                        </span>
+                        {isSelf && (
+                          <span className="px-1.5 py-0.2 rounded text-[8px] font-bold bg-slate-200 text-slate-700">
+                            Você
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-[#6B7280] font-mono truncate">{user.email}</p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2 shrink-0">
+                    {/* Botão Ativo/Inativo */}
+                    <button
+                      onClick={() => toggleUserStatus(user)}
+                      disabled={isMaster}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed ${
+                        user.ativo !== false
+                          ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100'
+                          : 'bg-red-50 text-red-600 border border-red-200 hover:bg-red-100'
+                      }`}
+                      title={isMaster ? 'Conta mestre não pode ser inativada' : 'Alternar status do usuário'}
+                    >
+                      {user.ativo !== false ? 'Ativo' : 'Inativo'}
+                    </button>
+
+                    {/* Botão Excluir */}
+                    {!isMaster && !isSelf && (
+                      <button
+                        onClick={() => handleDeleteUser(user)}
+                        disabled={isDeleting}
+                        className="p-2 rounded-xl bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 transition-colors cursor-pointer disabled:opacity-50"
+                        title="Excluir usuário permanentemente"
+                      >
+                        {isDeleting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
 
             {usuarios.length === 0 && (
               <div className="py-12 text-center text-xs font-bold text-[#6B7280]">
-                {loading ? 'Carregando lista de usuários...' : 'Nenhum usuário cadastrado além do administrador principal.'}
+                {loading ? 'Carregando lista de usuários...' : 'Nenhum usuário cadastrado no momento.'}
               </div>
             )}
           </div>

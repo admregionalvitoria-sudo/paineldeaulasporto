@@ -8,12 +8,13 @@ import {
   getAuth
 } from 'firebase/auth';
 import { initializeApp, getApps, getApp } from 'firebase/app';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, firebaseConfig } from '../firebase';
 import { UserProfile, UserRole, AuthContextType } from '../types';
 
 export interface ExtendedAuthContextType extends AuthContextType {
   criarUsuario: (nome: string, email: string, pass: string, role: UserRole) => Promise<UserProfile>;
+  excluirUsuario: (uid: string) => Promise<void>;
 }
 
 const AuthContext = createContext<ExtendedAuthContextType | undefined>(undefined);
@@ -292,29 +293,61 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
 
     // 2. Fallback via Secondary Auth App
-    const secAuth = getSecondaryAuth();
-    const userCredential = await createUserWithEmailAndPassword(secAuth, cleanEmail, pass);
-    const newUid = userCredential.user.uid;
+    try {
+      const secAuth = getSecondaryAuth();
+      const userCredential = await createUserWithEmailAndPassword(secAuth, cleanEmail, pass);
+      const newUid = userCredential.user.uid;
 
-    const userDocRef = doc(db, 'porto', 'dados', 'usuarios', newUid);
-    const newProfile: UserProfile = {
-      uid: newUid,
-      email: cleanEmail,
-      nome: cleanNome,
-      role,
-      ativo: true,
-      criadoPor: usuarioAtual?.email || 'admin@senai.br',
-      criadoEm: serverTimestamp()
-    };
+      const userDocRef = doc(db, 'porto', 'dados', 'usuarios', newUid);
+      const newProfile: UserProfile = {
+        uid: newUid,
+        email: cleanEmail,
+        nome: cleanNome,
+        role,
+        ativo: true,
+        criadoPor: usuarioAtual?.email || 'admin@senai.br',
+        criadoEm: serverTimestamp()
+      };
 
-    await setDoc(userDocRef, newProfile);
-    await signOut(secAuth); // Garante que o app secundário é limpo
+      await setDoc(userDocRef, newProfile);
+      await signOut(secAuth); // Garante que o app secundário é limpo
 
-    return newProfile;
+      return newProfile;
+    } catch (secErr: any) {
+      if (secErr.code === 'auth/operation-not-allowed') {
+        throw new Error("O provedor 'E-mail/Senha' está desativado no Firebase. Acesse o Console do Firebase (Authentication > Sign-in method) e ative a opção 'E-mail/senha'.");
+      }
+      throw secErr;
+    }
+  };
+
+  const excluirUsuario = async (uid: string): Promise<void> => {
+    // 1. Tenta deletar pelo backend API
+    try {
+      const currentUser = auth.currentUser;
+      const idToken = currentUser ? await currentUser.getIdToken() : '';
+      const response = await fetch(`/api/usuarios?uid=${uid}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${idToken}`
+        }
+      });
+
+      if (response.ok) {
+        return;
+      }
+    } catch (apiErr) {
+      console.warn("Backend /api/usuarios DELETE indisponível, usando exclusão direta no Firestore:", apiErr);
+    }
+
+    // 2. Exclusão direta no Firestore
+    const userDocRef = doc(db, 'porto', 'dados', 'usuarios', uid);
+    await deleteDoc(userDocRef);
   };
 
   return (
-    <AuthContext.Provider value={{ usuarioAtual, loading, login, logout, temPermissao, criarUsuario }}>
+    <AuthContext.Provider value={{ usuarioAtual, loading, login, logout, temPermissao, criarUsuario, excluirUsuario }}>
       {children}
     </AuthContext.Provider>
   );

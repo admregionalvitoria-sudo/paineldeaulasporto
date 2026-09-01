@@ -9,11 +9,11 @@ function getAdminApp() {
         const serviceAccount = typeof serviceAccountVar === 'string' ? JSON.parse(serviceAccountVar) : serviceAccountVar;
         firebaseAdmin.initializeApp({
           credential: firebaseAdmin.credential.cert(serviceAccount),
-          projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'grand-droplet-7xjsq'
+          projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'paineldeaulas-e34da'
         });
       } else {
         firebaseAdmin.initializeApp({
-          projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'grand-droplet-7xjsq'
+          projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'paineldeaulas-e34da'
         });
       }
     } catch (e) {
@@ -46,18 +46,23 @@ export default async function handler(req, res) {
   try {
     const decodedToken = await firebaseAdmin.auth().verifyIdToken(idToken);
     callerUid = decodedToken.uid;
-    callerEmail = decodedToken.email || '';
+    callerEmail = (decodedToken.email || '').toLowerCase();
   } catch (err) {
     return res.status(401).json({ error: 'Token de autenticação inválido ou expirado' });
   }
 
-  // Verificar se o chamador possui papel super_admin
+  // Verificar se o chamador possui papel de administrador
   const db = firebaseAdmin.firestore();
   const callerDoc = await db.collection('porto').doc('dados').collection('usuarios').doc(callerUid).get();
-  const callerRole = callerDoc.exists ? callerDoc.data()?.role : (callerEmail === 'admin@senai.br' ? 'super_admin' : '');
+  const callerRole = callerDoc.exists ? callerDoc.data()?.role : '';
+  const isAuthorized = 
+    callerRole === 'super_admin' || 
+    callerRole === 'admin' || 
+    callerEmail === 'admin@senai.br' || 
+    callerEmail === 'admregionalvitoria@gmail.com';
 
-  if (callerRole !== 'super_admin' && callerEmail !== 'admin@senai.br') {
-    return res.status(403).json({ error: 'Apenas Super Administradores podem gerenciar usuários' });
+  if (!isAuthorized) {
+    return res.status(403).json({ error: 'Apenas Administradores podem gerenciar usuários' });
   }
 
   if (req.method === 'GET') {
@@ -119,10 +124,42 @@ export default async function handler(req, res) {
       await db.collection('porto').doc('dados').collection('usuarios').doc(uid).update(updates);
 
       if (typeof ativo === 'boolean') {
-        await firebaseAdmin.auth().updateUser(uid, { disabled: !ativo });
+        try {
+          await firebaseAdmin.auth().updateUser(uid, { disabled: !ativo });
+        } catch (authErr) {
+          console.warn("Aviso ao atualizar status no Firebase Auth:", authErr.message);
+        }
       }
 
       return res.status(200).json({ success: true });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  }
+
+  if (req.method === 'DELETE') {
+    const uid = req.query?.uid || req.body?.uid;
+    if (!uid) {
+      return res.status(400).json({ error: 'uid é obrigatório para exclusão' });
+    }
+
+    // Não permitir excluir a si mesmo
+    if (uid === callerUid) {
+      return res.status(400).json({ error: 'Você não pode excluir sua própria conta conectada' });
+    }
+
+    try {
+      // 1. Remover do Firestore
+      await db.collection('porto').doc('dados').collection('usuarios').doc(uid).delete();
+
+      // 2. Remover do Firebase Auth se existir
+      try {
+        await firebaseAdmin.auth().deleteUser(uid);
+      } catch (authErr) {
+        console.warn("Aviso ao deletar usuário do Firebase Auth:", authErr.message);
+      }
+
+      return res.status(200).json({ success: true, message: 'Usuário excluído com sucesso' });
     } catch (err) {
       return res.status(500).json({ error: err.message });
     }
