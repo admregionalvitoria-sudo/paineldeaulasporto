@@ -478,10 +478,8 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
 
     return (
         <div className="h-screen w-screen overflow-hidden flex flex-col bg-[#EDF1F6] text-[#0F2A52] relative font-sans">
-            {/* Ambient Blobs / Background Lights */}
-            <div className="fixed top-0 right-0 w-[500px] h-[500px] bg-[#1D4E8C]/30 blur-[90px] rounded-full pointer-events-none z-0" />
-            <div className="fixed top-1/2 left-0 w-[500px] h-[500px] bg-[#1D4E8C]/15 blur-[100px] rounded-full pointer-events-none z-0" />
-            <div className="fixed bottom-0 right-1/4 w-[500px] h-[500px] bg-[#F4901E]/30 blur-[90px] rounded-full pointer-events-none z-0" />
+            {/* Background */}
+            <div className="fixed inset-0 bg-[#F1F5F9] pointer-events-none z-0" />
 
             <Header />
             
@@ -565,8 +563,8 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
                 <div className="hidden md:flex flex-row items-stretch gap-4 lg:gap-6 w-full h-full min-h-0">
                     
                     {/* Left Card: Schedule Table Container */}
-                    <div className="flex-1 min-w-0 h-full gradient-border-wrapper rounded-[2rem] lg:rounded-[2.5rem] shadow-[0_20px_50px_-15px_rgba(15,42,82,0.12)] overflow-hidden flex flex-col">
-                        <div className="glass-panel rounded-[1.9rem] lg:rounded-[2.4rem] w-full h-full bg-white/95 backdrop-blur-md flex flex-col overflow-hidden custom-scrollbar overflow-y-auto">
+                    <div className="flex-1 min-w-0 h-full rounded-[2rem] lg:rounded-[2.5rem] bg-white border border-[#CBD5E1] shadow-[0_10px_30px_-10px_rgba(15,42,82,0.08)] overflow-hidden flex flex-col">
+                        <div className="rounded-[1.9rem] lg:rounded-[2.4rem] w-full h-full bg-white flex flex-col overflow-hidden custom-scrollbar overflow-y-auto">
                             {displayAulas.length > 0 ? (
                                 <div className="w-full">
                                     <table className="w-full text-left border-collapse">
@@ -579,14 +577,14 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
                                                 <th className="py-3.5 lg:py-4 px-5 lg:px-7">Horário</th>
                                             </tr>
                                         </thead>
-                                        <tbody className="divide-y divide-[#CBD5E1]">
+                                        <tbody className="divide-y divide-[#E2E8F0]">
                                             {displayAulas.map((aula, idx) => (
                                                 <motion.tr 
                                                     key={aula.id}
                                                     initial={{ opacity: 0, y: 8 }}
                                                     animate={{ opacity: 1, y: 0 }}
                                                     transition={{ delay: idx * 0.02, duration: 0.3 }}
-                                                    className="hover:bg-[#DBEAFE]/40 transition-colors duration-200"
+                                                    className="hover:bg-[#F8FAFC] transition-colors duration-200"
                                                 >
                                                     <td className="py-3.5 lg:py-4 px-5 lg:px-7 font-black text-[#0F2A52] text-base md:text-lg tracking-tight uppercase">
                                                         <span>{formatText(aula.turma)}</span>
@@ -633,8 +631,8 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
 
                     {/* Right Card: Independent Media Container (Fixed 1080x1920 - 9:16 Vertical Ratio scaled to fit full screen height) */}
                     {hasAnuncios && (
-                        <div className="h-full aspect-[9/16] flex-shrink-0 gradient-border-wrapper rounded-[2rem] lg:rounded-[2.5rem] shadow-[0_20px_50px_-15px_rgba(15,42,82,0.12)] overflow-hidden flex flex-col justify-center items-center">
-                            <div className="glass-panel rounded-[1.9rem] lg:rounded-[2.4rem] w-full h-full aspect-[9/16] bg-[#0A192F] overflow-hidden flex items-center justify-center p-0">
+                        <div className="h-full aspect-[9/16] flex-shrink-0 rounded-[2rem] lg:rounded-[2.5rem] bg-white border border-[#CBD5E1] shadow-[0_10px_30px_-10px_rgba(15,42,82,0.08)] overflow-hidden flex flex-col justify-center items-center">
+                            <div className="rounded-[1.9rem] lg:rounded-[2.4rem] w-full h-full aspect-[9/16] bg-black overflow-hidden flex items-center justify-center p-0">
                                 <MediaCarouselPanel anuncios={context.anuncios} />
                             </div>
                         </div>
@@ -642,8 +640,8 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
                 </div>
 
                 {/* 2. MOBILE VIEW: Blocks / Cards Format */}
-                <div className="block md:hidden h-full gradient-border-wrapper rounded-[1.8rem] shadow-[0_20px_50px_-15px_rgba(15,42,82,0.12)] overflow-hidden">
-                    <div className="glass-panel rounded-[1.7rem] p-3 w-full h-full custom-scrollbar overflow-y-auto pb-16">
+                <div className="block md:hidden h-full rounded-[1.8rem] bg-white border border-[#CBD5E1] shadow-sm overflow-hidden">
+                    <div className="p-3 w-full h-full bg-white custom-scrollbar overflow-y-auto pb-16">
                         <div className="flex flex-col gap-3.5 px-0.5">
                             {/* 1. AULAS PRIMEIRO */}
                             <AnimatePresence mode="popLayout">

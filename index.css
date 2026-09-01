@@ -39,21 +39,17 @@ body {
 
 /* Glassmorphism utility */
 .glass-panel {
-  background: rgba(255, 255, 255, 0.45);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
+  background: #FFFFFF;
 }
 
 .glass-footer {
-  background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
+  background: #FFFFFF;
 }
 
-/* Continuous 360° Gradient Border Wrapper */
+/* Border Wrapper */
 .gradient-border-wrapper {
-  background: linear-gradient(135deg, #1A4A9E 0%, #3B82C4 35%, #F4901E 70%, #EF5B2E 100%);
-  padding: 2px;
+  background: #E2E8F0;
+  padding: 1px;
 }
 
 /* Custom Scrollbar */
