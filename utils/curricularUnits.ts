@@ -1,4 +1,6 @@
-import { repairMojibake } from './encodingHelper';
+/**
+ * Dicionário Oficial e Utilitários de Alta Precisão para Normalização e Correção de Unidades Curriculares do SENAI
+ */
 
 export const CANONICAL_UNIDADES_CURRICULARES: string[] = [
   "PROJETO INTEGRADOR I: IDEAÇÃO",
@@ -238,10 +240,12 @@ const RULES: MatchRule[] = [
   }
 ];
 
+/**
+ * Normaliza qualquer texto eliminando acentos, pontuação, carga horária e caracteres estranhos
+ */
 export const normalizeTextForMatching = (text: string): string => {
   if (!text) return '';
-  const repaired = repairMojibake(text);
-  return repaired
+  return text
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '') // remove acentos normais
     .toUpperCase()
@@ -249,15 +253,18 @@ export const normalizeTextForMatching = (text: string): string => {
     .replace(/\s*\(CH\s*:[^)]*\)/gi, '')
     .replace(/\s*CH\s*:\s*[\d.]+/gi, '')
     .replace(/\s*\(CH\s*[\d.]+\)/gi, '')
-    .replace(/[^A-Z0-9]/g, ' ')
+    .replace(/[^A-Z0-9]/g, ' ') // substitui qualquer caractere não alfanumérico por espaço
     .replace(/\s+/g, ' ')
     .trim();
 };
 
+/**
+ * Função principal para formatar e reparar a Unidade Curricular
+ */
 export const formatarUnidadeCurricular = (uc: string | undefined | null): string => {
   if (!uc) return 'Atividade SENAI';
 
-  let raw = repairMojibake(String(uc).trim());
+  let raw = String(uc).trim();
   
   // 1. Remover padrão de CH imediatamente
   raw = raw
@@ -286,8 +293,8 @@ export const formatarUnidadeCurricular = (uc: string | undefined | null): string
     }
   }
 
-  // 4. Se não casou por palavras-chave, reparar mojibake e retornar
-  let cleanFallback = repairMojibake(raw)
+  // 4. Se não casou por palavras-chave, limpar caracteres ilegíveis e retornar
+  let cleanFallback = raw
     .replace(/[\uFFFD]/g, '')
     .replace(/['"]/g, '')
     .replace(/\s+/g, ' ')
@@ -295,4 +302,3 @@ export const formatarUnidadeCurricular = (uc: string | undefined | null): string
 
   return cleanFallback.toUpperCase() || 'Atividade SENAI';
 };
-

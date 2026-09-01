@@ -2,7 +2,6 @@ import React, { useState, useContext, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DataContext, ExtendedDataContextType } from '../context/DataContext';
 import { Aula, Anuncio, AgendamentoSala } from '../types';
-import ImportPreviewModal from './ImportPreviewModal';
 import { formatarUnidadeCurricular, CANONICAL_UNIDADES_CURRICULARES } from '../utils/curricularUnits';
 import { formatarNomeSala } from '../utils/roomFormatter';
 import { 
@@ -1342,23 +1341,12 @@ const AgendamentosAdminSection: React.FC = () => {
     );
 };
 
-const AdminPanel: React.FC<{ 
-    onLogout: () => void;
-    onGoToMedia?: () => void;
-    onGoToAudit?: () => void;
-    onGoToUsers?: () => void;
-}> = ({ onLogout, onGoToMedia, onGoToAudit, onGoToUsers }) => {
+const AdminPanel: React.FC<{ onLogout: () => void }> = ({ onLogout }) => {
     const context = useContext(DataContext) as ExtendedDataContextType;
     const [adminTab, setAdminTab] = useState<'aulas' | 'agendamentos'>('aulas');
     const [editingAula, setEditingAula] = useState<Aula | null>(null);
     const [addingAula, setAddingAula] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
-
-    // Estado do Modal de Preview de Importação CSV
-    const [previewOpen, setPreviewOpen] = useState(false);
-    const [previewFileName, setPreviewFileName] = useState('');
-    const [previewAulas, setPreviewAulas] = useState<Omit<Aula, 'id'>[]>([]);
-    const [isSubmittingImport, setIsSubmittingImport] = useState(false);
 
     const [searchDate, setSearchDate] = useState('');
     const [searchTurma, setSearchTurma] = useState('');
@@ -1367,31 +1355,11 @@ const AdminPanel: React.FC<{
 
     const pendentesCount = (context.agendamentos || []).filter(a => a.status === 'pendente').length;
 
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
         const file = e.target.files?.[0];
         if (file) {
-            setPreviewFileName(file.name);
-            if (context.processCSVData) {
-                const aulasProcessadas = await context.processCSVData(file);
-                setPreviewAulas(aulasProcessadas);
-                setPreviewOpen(true);
-            } else {
-                context.uploadCSV(file);
-            }
+            context.uploadCSV(file);
             if (fileInputRef.current) fileInputRef.current.value = '';
-        }
-    };
-
-    const handleConfirmImport = async () => {
-        if (!context.applyImportDiff) return;
-        setIsSubmittingImport(true);
-        try {
-            await context.applyImportDiff(previewAulas);
-            setPreviewOpen(false);
-        } catch (err: any) {
-            alert("Erro ao aplicar importação: " + err.message);
-        } finally {
-            setIsSubmittingImport(false);
         }
     };
 
@@ -1420,15 +1388,6 @@ const AdminPanel: React.FC<{
                 {editingAula && <EditModal aula={editingAula} onClose={() => setEditingAula(null)} onSave={d => { context.updateAula(editingAula.id, d); setEditingAula(null); }} />}
                 {addingAula && <AddModal onClose={() => setAddingAula(false)} onSave={d => { context.addAula(d); setAddingAula(false); }} />}
             </AnimatePresence>
-
-            <ImportPreviewModal
-                isOpen={previewOpen}
-                fileName={previewFileName}
-                processedAulas={previewAulas}
-                onConfirm={handleConfirmImport}
-                onCancel={() => setPreviewOpen(false)}
-                isSubmitting={isSubmittingImport}
-            />
             
             <header className="flex flex-col md:flex-row justify-between items-center mb-8 gap-6 max-w-[2000px] mx-auto">
                 <motion.div initial={{ opacity: 0, x: -20 }} animate={{ opacity: 1, x: 0 }}>
@@ -1441,44 +1400,14 @@ const AdminPanel: React.FC<{
                 </motion.div>
 
                 <div className="flex flex-wrap justify-center items-center gap-3">
-                    {onGoToMedia && (
-                        <button
-                            onClick={onGoToMedia}
-                            className="bg-white border border-[#CBD5E1] text-[#0F2A52] px-4 py-3 rounded-2xl font-black uppercase text-[10px] flex items-center gap-2 hover:bg-[#F1F5F9] transition-all shadow-xs tracking-wider"
-                        >
-                            <CameraIcon className="w-4 h-4 text-[#F4901E]" />
-                            <span>Mídia TV</span>
-                        </button>
-                    )}
-
-                    {onGoToAudit && (
-                        <button
-                            onClick={onGoToAudit}
-                            className="bg-white border border-[#CBD5E1] text-[#0F2A52] px-4 py-3 rounded-2xl font-black uppercase text-[10px] flex items-center gap-2 hover:bg-[#F1F5F9] transition-all shadow-xs tracking-wider"
-                        >
-                            <SettingsIcon className="w-4 h-4 text-emerald-600" />
-                            <span>Auditoria</span>
-                        </button>
-                    )}
-
-                    {onGoToUsers && (
-                        <button
-                            onClick={onGoToUsers}
-                            className="bg-white border border-[#CBD5E1] text-[#0F2A52] px-4 py-3 rounded-2xl font-black uppercase text-[10px] flex items-center gap-2 hover:bg-[#F1F5F9] transition-all shadow-xs tracking-wider"
-                        >
-                            <BuildingIcon className="w-4 h-4 text-blue-600" />
-                            <span>Usuários</span>
-                        </button>
-                    )}
-
                     <button
                         onClick={() => {
                             window.location.pathname = '/agendamento';
                         }}
-                        className="bg-white border border-[#CBD5E1] text-[#0F2A52] px-5 py-3 rounded-2xl font-black uppercase text-[11px] flex items-center gap-2 hover:bg-[#F1F5F9] transition-all shadow-xs tracking-wider"
+                        className="bg-white border border-[#CBD5E1] text-[#0F2A52] px-5 py-3.5 rounded-2xl font-black uppercase text-[11px] flex items-center gap-2 hover:bg-[#F1F5F9] transition-all shadow-xs tracking-wider"
                     >
                         <CalendarIcon className="w-4 h-4 text-[#F4901E]" />
-                        <span>Agendamentos</span>
+                        <span>Ver Agendamento de Salas</span>
                     </button>
 
                     <input type="file" accept=".csv,.xlsx,.xls" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
@@ -1486,18 +1415,24 @@ const AdminPanel: React.FC<{
                     <button 
                         onClick={() => fileInputRef.current?.click()} 
                         disabled={context.loading}
-                        className="bg-[#0F2A52] text-white px-5 py-3 rounded-2xl font-black uppercase text-[11px] flex items-center gap-2 hover:bg-[#1D4E8C] transition-all shadow-md disabled:opacity-50 active:scale-95 tracking-wider"
+                        className="bg-[#0F2A52] text-white px-6 py-3.5 rounded-2xl font-black uppercase text-[11px] flex items-center gap-2 hover:bg-[#1D4E8C] transition-all shadow-md disabled:opacity-50 active:scale-95 tracking-wider"
                     >
                         <UploadCloudIcon className={`w-4 h-4 ${context.loading ? 'animate-bounce' : ''}`} /> 
                         {context.loading ? 'Processando...' : 'Upload CSV'}
                     </button>
                     <button 
                         onClick={() => setAddingAula(true)}
-                        className="bg-[#F4901E] text-white px-5 py-3 rounded-2xl font-black uppercase text-[11px] flex items-center gap-2 hover:bg-[#E67E22] transition-all shadow-md active:scale-95 tracking-wider"
+                        className="bg-[#F4901E] text-white px-6 py-3.5 rounded-2xl font-black uppercase text-[11px] flex items-center gap-2 hover:bg-[#E67E22] transition-all shadow-md active:scale-95 tracking-wider"
                     >
                         <PlusCircleIcon className="w-4 h-4" /> Nova Aula
                     </button>
-                    <button onClick={onLogout} title="Voltar ao Painel" className="p-3 bg-white rounded-2xl hover:bg-[#DBEAFE] transition-colors border border-[#E5E7EB] text-[#0F2A52] shadow-sm"><LogOutIcon className="w-5 h-5" /></button>
+                    <button 
+                        onClick={() => context.clearAulas()} 
+                        className="bg-[#EF5B2E]/10 text-[#EF5B2E] border border-[#EF5B2E]/20 px-5 py-3.5 rounded-2xl font-black uppercase text-[11px] flex items-center gap-2 hover:bg-[#EF5B2E] hover:text-white transition-all active:scale-95 tracking-wider"
+                    >
+                        <TrashIcon className="w-4 h-4" /> Limpar Tudo
+                    </button>
+                    <button onClick={onLogout} title="Voltar ao Painel" className="p-3.5 bg-white rounded-2xl hover:bg-[#DBEAFE] transition-colors border border-[#E5E7EB] text-[#0F2A52] shadow-sm"><LogOutIcon className="w-5 h-5" /></button>
                 </div>
             </header>
 
@@ -1687,19 +1622,7 @@ const AdminPanel: React.FC<{
     );
 };
 
-interface AdminScreenProps {
-    onReturnToDashboard: () => void;
-    onGoToMedia?: () => void;
-    onGoToAudit?: () => void;
-    onGoToUsers?: () => void;
-}
-
-const AdminScreen: React.FC<AdminScreenProps> = ({ 
-    onReturnToDashboard,
-    onGoToMedia,
-    onGoToAudit,
-    onGoToUsers
-}) => {
+const AdminScreen: React.FC<{ onReturnToDashboard: () => void }> = ({ onReturnToDashboard }) => {
     const [auth, setAuth] = useState(false);
     const [password, setPassword] = useState("");
 
@@ -1734,14 +1657,7 @@ const AdminScreen: React.FC<AdminScreenProps> = ({
             </motion.div>
         </div>
     );
-    return (
-        <AdminPanel 
-            onLogout={onReturnToDashboard} 
-            onGoToMedia={onGoToMedia}
-            onGoToAudit={onGoToAudit}
-            onGoToUsers={onGoToUsers}
-        />
-    );
+    return <AdminPanel onLogout={onReturnToDashboard} />;
 };
 
 export default AdminScreen;

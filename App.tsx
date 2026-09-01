@@ -1,66 +1,37 @@
+
 import React, { useState, useEffect, useContext } from 'react';
 import DashboardScreen from './components/DashboardScreen';
 import AdminScreen from './components/AdminScreen';
 import AgendamentoScreen from './components/AgendamentoScreen';
-import LoginScreen from './components/LoginScreen';
-import MediaScreen from './components/MediaScreen';
-import AuditLogsScreen from './components/AuditLogsScreen';
-import UserManagementScreen from './components/UserManagementScreen';
 import OfflineScreen from './components/OfflineScreen';
-import ProtectedRoute from './components/ProtectedRoute';
 import { DataProvider, DataContext } from './context/DataContext';
-import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 
-export type AppView = 'dashboard' | 'admin' | 'agendamento' | 'login' | 'midia' | 'auditoria' | 'usuarios';
+export type AppView = 'dashboard' | 'admin' | 'agendamento';
 
 const AppContent: React.FC<{
   view: AppView;
-  setView: (v: AppView) => void;
-  navigate: (v: AppView) => void;
-}> = ({ view, navigate }) => {
+  showAdmin: () => void;
+  showDashboard: () => void;
+  showAgendamento: () => void;
+}> = ({ view, showAdmin, showDashboard, showAgendamento }) => {
   const context = useContext(DataContext);
   const isOffline = context?.isOffline ?? (!navigator.onLine);
 
   return (
     <div className="w-full h-full relative">
       {isOffline && <OfflineScreen onRetry={() => window.location.reload()} />}
-
-      {view === 'login' ? (
-        <LoginScreen 
-          onSuccess={() => navigate('admin')} 
-          onReturnToDashboard={() => navigate('dashboard')} 
-        />
-      ) : view === 'midia' ? (
-        <ProtectedRoute allowedRoles={['midia', 'admin', 'super_admin']} onReturnToDashboard={() => navigate('dashboard')}>
-          <MediaScreen onBack={() => navigate('admin')} />
-        </ProtectedRoute>
-      ) : view === 'auditoria' ? (
-        <ProtectedRoute allowedRoles={['admin', 'super_admin']} onReturnToDashboard={() => navigate('dashboard')}>
-          <AuditLogsScreen onBack={() => navigate('admin')} />
-        </ProtectedRoute>
-      ) : view === 'usuarios' ? (
-        <ProtectedRoute allowedRoles={['super_admin']} onReturnToDashboard={() => navigate('dashboard')}>
-          <UserManagementScreen onBack={() => navigate('admin')} />
-        </ProtectedRoute>
-      ) : view === 'admin' ? (
-        <ProtectedRoute allowedRoles={['admin', 'super_admin']} onReturnToDashboard={() => navigate('dashboard')}>
-          <AdminScreen 
-            onReturnToDashboard={() => navigate('dashboard')} 
-            onGoToMedia={() => navigate('midia')}
-            onGoToAudit={() => navigate('auditoria')}
-            onGoToUsers={() => navigate('usuarios')}
-          />
-        </ProtectedRoute>
+      {view === 'admin' ? (
+        <AdminScreen onReturnToDashboard={showDashboard} />
       ) : view === 'agendamento' ? (
         <AgendamentoScreen 
-          onReturnToDashboard={() => navigate('dashboard')} 
-          onGoToAdmin={() => navigate('admin')} 
+          onReturnToDashboard={showDashboard} 
+          onGoToAdmin={showAdmin} 
         />
       ) : (
         <DashboardScreen 
-          onAdminClick={() => navigate('admin')} 
-          onAgendamentoClick={() => navigate('agendamento')}
+          onAdminClick={showAdmin} 
+          onAgendamentoClick={showAgendamento}
         />
       )}
     </div>
@@ -68,24 +39,31 @@ const AppContent: React.FC<{
 };
 
 function App() {
-  const getViewFromUrl = (): AppView => {
+  const getInitialView = (): AppView => {
     const path = window.location.pathname;
     const hash = window.location.hash;
-
-    if (path.startsWith('/admin') || hash.includes('admin')) return 'admin';
-    if (path.startsWith('/login') || hash.includes('login')) return 'login';
-    if (path.startsWith('/midia') || hash.includes('midia')) return 'midia';
-    if (path.startsWith('/auditoria') || hash.includes('auditoria')) return 'auditoria';
-    if (path.startsWith('/usuarios') || hash.includes('usuarios')) return 'usuarios';
-    if (path.startsWith('/agendamento') || hash.includes('agendamento')) return 'agendamento';
+    if (path.startsWith('/admin') || hash === '#admin' || hash === '#/admin') {
+      return 'admin';
+    }
+    if (path.startsWith('/agendamento') || hash === '#agendamento' || hash === '#/agendamento') {
+      return 'agendamento';
+    }
     return 'dashboard';
   };
 
-  const [view, setView] = useState<AppView>(getViewFromUrl);
+  const [view, setView] = useState<AppView>(getInitialView);
 
   useEffect(() => {
     const handleLocationChange = () => {
-      setView(getViewFromUrl());
+      const path = window.location.pathname;
+      const hash = window.location.hash;
+      if (path.startsWith('/admin') || hash === '#admin' || hash === '#/admin') {
+        setView('admin');
+      } else if (path.startsWith('/agendamento') || hash === '#agendamento' || hash === '#/agendamento') {
+        setView('agendamento');
+      } else {
+        setView('dashboard');
+      }
     };
 
     window.addEventListener('popstate', handleLocationChange);
@@ -96,26 +74,38 @@ function App() {
     };
   }, []);
 
-  const navigate = (targetView: AppView) => {
-    const targetPath = targetView === 'dashboard' ? '/' : `/${targetView}`;
-    if (window.location.pathname !== targetPath) {
-      window.history.pushState({}, '', targetPath);
+  const showAdmin = () => {
+    if (window.location.pathname !== '/admin') {
+      window.history.pushState({}, '', '/admin');
     }
-    setView(targetView);
+    setView('admin');
+  };
+
+  const showDashboard = () => {
+    if (window.location.pathname !== '/') {
+      window.history.pushState({}, '', '/');
+    }
+    setView('dashboard');
+  };
+
+  const showAgendamento = () => {
+    if (window.location.pathname !== '/agendamento') {
+      window.history.pushState({}, '', '/agendamento');
+    }
+    setView('agendamento');
   };
 
   return (
-    <AuthProvider>
-      <ThemeProvider>
-        <DataProvider>
-          <AppContent 
-            view={view} 
-            setView={setView} 
-            navigate={navigate} 
-          />
-        </DataProvider>
-      </ThemeProvider>
-    </AuthProvider>
+    <ThemeProvider>
+      <DataProvider>
+        <AppContent 
+          view={view} 
+          showAdmin={showAdmin} 
+          showDashboard={showDashboard} 
+          showAgendamento={showAgendamento}
+        />
+      </DataProvider>
+    </ThemeProvider>
   );
 }
 

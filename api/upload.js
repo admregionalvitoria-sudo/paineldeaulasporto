@@ -20,7 +20,6 @@ export default async function handler(req, res) {
 
   const token = getBlobToken();
 
-
   if (req.method === 'DELETE') {
     try {
       const url = req.query.url || req.body?.url;

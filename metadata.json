@@ -1,8 +1,6 @@
 {
-  "name": "Remix Remix Porto Painel de aula",
-  "description": "Um painel de visualização de aulas em tempo real para escolas, com um painel administrativo para gerenciamento de conteúdo. O design utiliza o estilo glassmorphism para uma interface moderna e translúcida, priorizando a usabilidade e a acessibilidade.",
+  "name": "Porto Painel de aula",
+  "description": "Painel de visualização de horários de aulas em tempo real para o SENAI Vitória com carrossel de mídias dinâmico, sistema de agendamento de salas livres e painel administrativo.",
   "requestFramePermissions": [],
-  "majorCapabilities": [
-    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
-  ]
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

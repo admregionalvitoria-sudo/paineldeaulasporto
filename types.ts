@@ -1,75 +1,15 @@
 
-export type UserRole = 'super_admin' | 'admin' | 'midia';
-
-export interface UserProfile {
-  uid: string;
-  email: string;
-  nome: string;
-  role: UserRole;
-  ativo: boolean;
-  criadoEm?: any;
-  criadoPor?: string;
-}
-
-export interface Ambiente {
-  id: string;
-  nome: string; // Ex: "SALA 05", "LAB 08"
-  tipo?: 'sala' | 'laboratorio' | 'auditorio' | 'oficina' | 'outro';
-  ativo: boolean;
-  criadoPor?: string;
-  criadoEm?: any;
-  atualizadoEm?: any;
-}
-
-export type AuditAction = 
-  | 'APROVAR_AGENDAMENTO'
-  | 'REJEITAR_AGENDAMENTO'
-  | 'EXCLUIR_AGENDAMENTO'
-  | 'CRIAR_AULA'
-  | 'EDITAR_AULA'
-  | 'EXCLUIR_AULA'
-  | 'IMPORTAR_CSV'
-  | 'UPLOAD_MIDIA'
-  | 'EXCLUIR_MIDIA'
-  | 'REORDENAR_MIDIA'
-  | 'CRIAR_USUARIO'
-  | 'DESATIVAR_USUARIO'
-  | 'CRIAR_AMBIENTE'
-  | 'EDITAR_AMBIENTE';
-
-export interface LogEntry {
-  id: string;
-  actorUid: string;
-  actorEmail: string;
-  actorNome: string;
-  acao: AuditAction;
-  entidadeTipo: 'aula' | 'agendamento' | 'anuncio' | 'usuario' | 'ambiente';
-  entidadeId: string;
-  antes?: any;
-  depois?: any;
-  timestamp: any;
-}
-
-export interface AuthContextType {
-  usuarioAtual: UserProfile | null;
-  loading: boolean;
-  login: (email: string, pass: string) => Promise<void>;
-  logout: () => Promise<void>;
-  temPermissao: (papeisPermitidos: UserRole[]) => boolean;
-}
-
 export interface Aula {
   id: string;
   data: string; // Formato DD/MM/YYYY
   sala: string;
-  salaId?: string;
-  salaOriginal?: string;
   turma: string;
   instrutor: string;
   unidade_curricular: string;
   inicio: string;
   fim: string;
   turno?: string;
+  // Novos campos solicitados
   titulo?: string;
   descricao?: string;
   videoUrl?: string;
@@ -100,7 +40,6 @@ export interface Aluno {
 export interface AgendamentoSala {
   id: string;
   sala: string;
-  salaId?: string;
   data: string; // Formato DD/MM/YYYY
   turno: string; // 'Matutino' | 'Vespertino' | 'Noturno'
   horarioInicio?: string;
@@ -123,7 +62,6 @@ export interface DataContextType {
   anuncios: Anuncio[];
   alunos: Aluno[];
   agendamentos: AgendamentoSala[];
-  ambientes: Ambiente[];
   salasCadastradas: string[];
   loading: boolean;
   error: string | null;
@@ -144,6 +82,4 @@ export interface DataContextType {
   aprovarAgendamento: (id: string, criarAulaAutomatica?: boolean, aprovador?: string) => Promise<void>;
   rejeitarAgendamento: (id: string, motivoRejeicao?: string) => Promise<void>;
   excluirAgendamento: (id: string) => Promise<void>;
-  addAmbiente?: (nome: string, tipo?: Ambiente['tipo']) => Promise<void>;
 }
-
