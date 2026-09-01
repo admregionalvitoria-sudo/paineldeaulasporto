@@ -83,3 +83,49 @@ export interface DataContextType {
   rejeitarAgendamento: (id: string, motivoRejeicao?: string) => Promise<void>;
   excluirAgendamento: (id: string) => Promise<void>;
 }
+
+export type UserRole = 'admin' | 'midia' | 'super_admin';
+
+export interface UserProfile {
+  uid: string;
+  email: string;
+  nome: string;
+  role: UserRole;
+  ativo: boolean;
+  criadoEm?: any;
+  criadoPor?: string;
+  atualizadoEm?: any;
+}
+
+export interface AuthContextType {
+  usuarioAtual: UserProfile | null;
+  loading: boolean;
+  login: (email: string, pass: string) => Promise<void>;
+  logout: () => Promise<void>;
+  temPermissao: (papeisPermitidos: UserRole[]) => boolean;
+}
+
+export type AuditAction = 
+  | 'IMPORTAR_CSV' 
+  | 'CRIAR_AULA' 
+  | 'EDITAR_AULA' 
+  | 'EXCLUIR_AULA' 
+  | 'UPLOAD_MIDIA' 
+  | 'EXCLUIR_MIDIA' 
+  | 'APROVAR_AGENDAMENTO' 
+  | 'REJEITAR_AGENDAMENTO' 
+  | 'CRIAR_AMBIENTE'
+  | string;
+
+export interface LogEntry {
+  id: string;
+  actorUid: string;
+  actorEmail: string;
+  actorNome: string;
+  acao: AuditAction;
+  entidadeTipo: string;
+  entidadeId: string;
+  antes?: any;
+  depois?: any;
+  timestamp?: any;
+}

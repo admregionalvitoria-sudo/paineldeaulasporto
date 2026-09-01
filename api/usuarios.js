@@ -1,26 +1,30 @@
-import * as admin from 'firebase-admin';
+import admin from 'firebase-admin';
 
-// Inicializar Firebase Admin SDK se ainda não foi inicializado
-if (!admin.apps.length) {
-  try {
-    const serviceAccountVar = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
-    if (serviceAccountVar) {
-      const serviceAccount = JSON.parse(serviceAccountVar);
-      admin.initializeApp({
-        credential: admin.credential.cert(serviceAccount),
-        projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'painel-de-aulas'
-      });
-    } else {
-      admin.initializeApp({
-        projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'painel-de-aulas'
-      });
+function getAdminApp() {
+  const firebaseAdmin = admin.default || admin;
+  if (!firebaseAdmin.apps || firebaseAdmin.apps.length === 0) {
+    try {
+      const serviceAccountVar = process.env.FIREBASE_SERVICE_ACCOUNT_KEY;
+      if (serviceAccountVar) {
+        const serviceAccount = typeof serviceAccountVar === 'string' ? JSON.parse(serviceAccountVar) : serviceAccountVar;
+        firebaseAdmin.initializeApp({
+          credential: firebaseAdmin.credential.cert(serviceAccount),
+          projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'painel-de-aulas'
+        });
+      } else {
+        firebaseAdmin.initializeApp({
+          projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'painel-de-aulas'
+        });
+      }
+    } catch (e) {
+      console.warn("Aviso ao inicializar Firebase Admin SDK:", e.message);
     }
-  } catch (e) {
-    console.error("Erro ao inicializar Firebase Admin SDK:", e);
   }
+  return firebaseAdmin;
 }
 
 export default async function handler(req, res) {
+  const firebaseAdmin = getAdminApp();
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -40,7 +44,7 @@ export default async function handler(req, res) {
   let callerEmail = '';
 
   try {
-    const decodedToken = await admin.auth().verifyIdToken(idToken);
+    const decodedToken = await firebaseAdmin.auth().verifyIdToken(idToken);
     callerUid = decodedToken.uid;
     callerEmail = decodedToken.email || '';
   } catch (err) {
@@ -48,7 +52,7 @@ export default async function handler(req, res) {
   }
 
   // Verificar se o chamador possui papel super_admin
-  const db = admin.firestore();
+  const db = firebaseAdmin.firestore();
   const callerDoc = await db.collection('porto').doc('dados').collection('usuarios').doc(callerUid).get();
   const callerRole = callerDoc.exists ? callerDoc.data()?.role : (callerEmail === 'admin@senai.br' ? 'super_admin' : '');
 
@@ -74,7 +78,7 @@ export default async function handler(req, res) {
 
     try {
       // 1. Criar Usuário no Firebase Auth
-      const userRecord = await admin.auth().createUser({
+      const userRecord = await firebaseAdmin.auth().createUser({
         email,
         password,
         displayName: nome
@@ -87,7 +91,7 @@ export default async function handler(req, res) {
         role,
         ativo: true,
         criadoPor: callerEmail,
-        criadoEm: admin.firestore.FieldValue.serverTimestamp()
+        criadoEm: firebaseAdmin.firestore.FieldValue.serverTimestamp()
       });
 
       return res.status(201).json({ 
@@ -110,12 +114,12 @@ export default async function handler(req, res) {
       const updates = {};
       if (typeof ativo === 'boolean') updates.ativo = ativo;
       if (role) updates.role = role;
-      updates.atualizadoEm = admin.firestore.FieldValue.serverTimestamp();
+      updates.atualizadoEm = firebaseAdmin.firestore.FieldValue.serverTimestamp();
 
       await db.collection('porto').doc('dados').collection('usuarios').doc(uid).update(updates);
 
       if (typeof ativo === 'boolean') {
-        await admin.auth().updateUser(uid, { disabled: !ativo });
+        await firebaseAdmin.auth().updateUser(uid, { disabled: !ativo });
       }
 
       return res.status(200).json({ success: true });
