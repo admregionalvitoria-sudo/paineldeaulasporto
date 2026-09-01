@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <title>Criar Usuário Admin — SENAI</title>
+  <style>
+    body { font-family: monospace; background: #0f172a; color: #e2e8f0; display: flex; flex-direction: column; align-items: center; justify-content: center; min-height: 100vh; margin: 0; padding: 2rem; }
+    .card { background: #1e293b; border: 1px solid #334155; border-radius: 1rem; padding: 2rem; max-width: 520px; width: 100%; box-shadow: 0 25px 50px rgba(0,0,0,0.5); }
+    h1 { color: #f4901e; font-size: 1.2rem; text-transform: uppercase; letter-spacing: 0.1em; margin: 0 0 1.5rem; }
+    .field { margin-bottom: 1rem; }
+    .field label { display: block; font-size: 0.7rem; text-transform: uppercase; color: #94a3b8; margin-bottom: 0.4rem; }
+    .field input { width: 100%; background: #0f172a; border: 1px solid #475569; color: #e2e8f0; padding: 0.6rem 0.75rem; border-radius: 0.5rem; font-size: 0.875rem; box-sizing: border-box; }
+    button { width: 100%; background: #f4901e; color: white; border: none; padding: 0.8rem; border-radius: 0.5rem; font-weight: bold; font-size: 0.9rem; cursor: pointer; text-transform: uppercase; letter-spacing: 0.1em; margin-top: 1rem; }
+    button:disabled { background: #475569; cursor: not-allowed; }
+    #log { margin-top: 1.5rem; font-size: 0.78rem; background: #0f172a; border-radius: 0.5rem; padding: 1rem; border: 1px solid #334155; min-height: 80px; white-space: pre-wrap; color: #94a3b8; }
+    .success { color: #34d399; } .error { color: #f87171; } .info { color: #60a5fa; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🔑 Criar Usuário Admin • Firebase Painel de Aulas</h1>
+    <div class="field"><label>E-mail</label><input id="email" value="admin@senai.br" /></div>
+    <div class="field"><label>Senha</label><input id="password" type="text" value="Finds@20" /></div>
+    <div class="field"><label>Nome</label><input id="nome" value="Administrador SENAI" /></div>
+    <div class="field"><label>Função</label><input id="role" value="super_admin" /></div>
+    <button id="btn" onclick="criarUsuario()">Criar Usuário no Firebase</button>
+    <div id="log">Aguardando...</div>
+  </div>
+
+  <script type="module">
+    import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.0/firebase-app.js';
+    import { getAuth, createUserWithEmailAndPassword, signInWithEmailAndPassword } from 'https://www.gstatic.com/firebasejs/11.0.0/firebase-auth.js';
+    import { getFirestore, doc, setDoc } from 'https://www.gstatic.com/firebasejs/11.0.0/firebase-firestore.js';
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyAtFpYzDSwbQqxvhj0FZGWXG26Ki_L7BRk",
+      authDomain: "painel-de-aulas.firebaseapp.com",
+      projectId: "painel-de-aulas",
+      storageBucket: "painel-de-aulas.firebasestorage.app",
+      messagingSenderId: "744292371574",
+      appId: "1:744292371574:web:489ac7de95b515588c6357"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getFirestore(app);
+
+    window.criarUsuario = async function () {
+      const log = document.getElementById('log');
+      const btn = document.getElementById('btn');
+      const email = document.getElementById('email').value.trim();
+      const password = document.getElementById('password').value;
+      const nome = document.getElementById('nome').value.trim();
+      const role = document.getElementById('role').value.trim();
+
+      btn.disabled = true;
+      log.innerHTML = '<span class="info">⏳ Conectando ao Firebase...</span>\n';
+
+      let uid = '';
+      let idToken = '';
+
+      try {
+        log.innerHTML += '<span class="info">Tentando criar usuário no Auth...</span>\n';
+        const cred = await createUserWithEmailAndPassword(auth, email, password);
+        uid = cred.user.uid;
+        log.innerHTML += `<span class="success">✅ Usuário criado! UID: ${uid}</span>\n`;
+      } catch (err) {
+        if (err.code === 'auth/email-already-in-use') {
+          log.innerHTML += '<span class="info">E-mail já existe. Efetuando login...</span>\n';
+          try {
+            const cred = await signInWithEmailAndPassword(auth, email, password);
+            uid = cred.user.uid;
+            log.innerHTML += `<span class="success">✅ Autenticado! UID: ${uid}</span>\n`;
+          } catch (loginErr) {
+            log.innerHTML += `<span class="error">❌ Erro no login: ${loginErr.message}</span>`;
+            btn.disabled = false;
+            return;
+          }
+        } else {
+          log.innerHTML += `<span class="error">❌ Erro no Auth: ${err.code} — ${err.message}</span>\n`;
+          if (err.code === 'auth/configuration-not-found') {
+            log.innerHTML += `<span class="error">⚠️ O provedor Email/Senha não está habilitado no Firebase Console.\nAcesse: https://console.firebase.google.com/project/painel-de-aulas/authentication/providers\ne habilite "E-mail/senha".</span>`;
+          }
+          btn.disabled = false;
+          return;
+        }
+      }
+
+      // Gravar perfil no Firestore
+      log.innerHTML += '<span class="info">Gravando perfil no Firestore...</span>\n';
+      try {
+        await setDoc(doc(db, 'porto', 'dados', 'documents', 'usuarios', uid), {
+          uid, email, nome, role, ativo: true,
+          atualizadoEm: new Date().toISOString()
+        }, { merge: true });
+        log.innerHTML += `<span class="success">✅ Perfil gravado no Firestore!\n\n🎉 CONCLUÍDO COM SUCESSO!\n───────────────────────────\nE-mail:   ${email}\nFunção:   ${role}\nUID:      ${uid}\n───────────────────────────</span>`;
+      } catch (fsErr) {
+        log.innerHTML += `<span class="error">❌ Erro no Firestore: ${fsErr.message}</span>`;
+      }
+      btn.disabled = false;
+    };
+  </script>
+</body>
+</html>
