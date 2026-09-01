@@ -10,8 +10,10 @@ import {
   getYouTubeEmbedUrl, 
   isDirectVideoUrl, 
   detectMediaType,
-  getMediaBadgeInfo
+  getMediaBadgeInfo,
+  isCloudinaryUrl
 } from '../utils/mediaHelpers';
+import { getCloudinaryConfig } from '../utils/cloudinary';
 import { 
   Layers, 
   ArrowLeft, 
@@ -174,12 +176,17 @@ const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
         <div className="lg:col-span-4 space-y-6">
           {/* Card de Upload Direto */}
           <div className="bg-white p-6 rounded-3xl border border-[#E5E7EB] shadow-lg">
-            <h3 className="text-sm font-black uppercase tracking-wider text-[#0F2A52] mb-2 flex items-center gap-2">
-              <UploadCloud className="w-4 h-4 text-[#F4901E]" />
-              Upload de Arquivo (Foto/Vídeo)
-            </h3>
+            <div className="flex items-center justify-between mb-2">
+              <h3 className="text-sm font-black uppercase tracking-wider text-[#0F2A52] flex items-center gap-2">
+                <UploadCloud className="w-4 h-4 text-[#F4901E]" />
+                Upload de Arquivo (Foto/Vídeo)
+              </h3>
+              <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-full bg-emerald-50 text-emerald-700 border border-emerald-200">
+                Cloudinary: {getCloudinaryConfig().cloudName}
+              </span>
+            </div>
             <p className="text-xs text-[#6B7280] mb-4">
-              Envie fotos ou vídeos (até 50MB) para serem armazenados na nuvem e exibidos na TV.
+              Envie fotos ou vídeos (até 50MB) para serem armazenados na nuvem do Cloudinary ({getCloudinaryConfig().cloudName}) e exibidos na TV.
             </p>
 
             <input
@@ -197,7 +204,7 @@ const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
               className="w-full py-4 px-4 bg-[#0F2A52] hover:bg-[#1D4E8C] text-white font-black uppercase text-xs rounded-2xl shadow-md transition-all flex items-center justify-center gap-2 disabled:opacity-50"
             >
               <UploadCloud className="w-4 h-4" />
-              <span>{uploading ? (uploadStatus || 'Enviando...') : 'Selecionar Arquivos'}</span>
+              <span>{uploading ? (uploadStatus || 'Enviando ao Cloudinary...') : 'Selecionar Arquivos'}</span>
             </button>
           </div>
 

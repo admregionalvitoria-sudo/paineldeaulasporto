@@ -3,6 +3,7 @@ import { upload as vercelBlobUpload } from '@vercel/blob/client';
 import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType, AuditAction } from '../types';
 import { db, storage, auth } from '../firebase';
 import { formatarUnidadeCurricular } from '../utils/curricularUnits';
+import { uploadToCloudinary } from '../utils/cloudinary';
 import { 
   collection, 
   onSnapshot, 
@@ -471,6 +472,27 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const cleanFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
     const storagePath = `midias/${timestamp}_${cleanFileName}`;
 
+    // 1. Prioridade Máxima: Upload para o Cloudinary (j35zooeo / ml_default)
+    try {
+      const cloudinaryRes = await uploadToCloudinary(file);
+      if (cloudinaryRes && cloudinaryRes.src) {
+        return cloudinaryRes;
+      }
+    } catch (cloudinaryError: any) {
+      console.warn("Cloudinary upload falhou, tentando fallbacks:", cloudinaryError?.message || cloudinaryError);
+    }
+
+    // 2. Fallback: Firebase Storage
+    try {
+      const storageRef = ref(storage, storagePath);
+      const snapshot = await uploadBytes(storageRef, file);
+      const downloadUrl = await getDownloadURL(snapshot.ref);
+      return { src: downloadUrl, type: mediaType, storagePath, name: file.name };
+    } catch (firebaseError) {
+      console.warn("Firebase Storage falhou. Tentando Vercel Blob...", firebaseError);
+    }
+
+    // 3. Fallback: Vercel Blob
     try {
       const blob = await vercelBlobUpload(storagePath, file, {
         access: 'public',
@@ -478,18 +500,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       });
       return { src: blob.url, type: mediaType, storagePath: blob.url, name: file.name };
     } catch (vercelError) {
-      console.warn("Vercel Blob falhou. Tentando Firebase Storage...", vercelError);
+      console.warn("Vercel Blob falhou. Usando Base64/DataUrl...", vercelError);
     }
 
-    try {
-      const storageRef = ref(storage, storagePath);
-      const snapshot = await uploadBytes(storageRef, file);
-      const downloadUrl = await getDownloadURL(snapshot.ref);
-      return { src: downloadUrl, type: mediaType, storagePath, name: file.name };
-    } catch (firebaseError) {
-      console.warn("Firebase Storage falhou. Usando Base64...", firebaseError);
-    }
-
+    // 4. Fallback Local: Base64
     if (mediaType === 'image') {
       const compressedDataUrl = await compressImageToDataUrl(file);
       return { src: compressedDataUrl, type: 'image', name: file.name };

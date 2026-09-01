@@ -99,10 +99,16 @@ export const getYouTubeEmbedUrl = (url: string): string => {
     return url;
 };
 
+export const isCloudinaryUrl = (url: string): boolean => {
+    if (!url || typeof url !== 'string') return false;
+    return url.includes('cloudinary.com') || url.includes('res.cloudinary.com');
+};
+
 export const isDirectVideoUrl = (url: string): boolean => {
     if (!url || typeof url !== 'string') return false;
     return /\.(mp4|webm|ogg|mov|m4v|mkv)($|\?)/i.test(url) || 
            url.includes('video-stream') || 
+           url.includes('/video/upload/') ||
            url.includes('/video/') || 
            url.startsWith('blob:') || 
            url.startsWith('data:video/');
@@ -120,6 +126,7 @@ export const getMediaBadgeInfo = (url: string, explicitType?: 'image' | 'video')
     const driveId = extractDriveFileId(url);
     const ytId = extractYouTubeId(url);
     const isVcdn = isVcdnUrl(url);
+    const isCloudinary = isCloudinaryUrl(url);
     const isDirectVid = isDirectVideoUrl(url);
 
     if (isVcdn) {
@@ -152,6 +159,18 @@ export const getMediaBadgeInfo = (url: string, explicitType?: 'image' | 'video')
             color: 'bg-red-100 text-red-900 border-red-300',
             duration: 60,
             durationLabel: '1 min (60s)'
+        };
+    }
+
+    if (isCloudinary) {
+        const isVid = isDirectVid || explicitType === 'video';
+        return {
+            type: isVid ? ('video' as const) : ('image' as const),
+            provider: 'cloudinary',
+            label: isVid ? 'Cloudinary (Vídeo)' : 'Cloudinary (Foto)',
+            color: 'bg-emerald-100 text-emerald-900 border-emerald-300',
+            duration: isVid ? 60 : 15,
+            durationLabel: isVid ? '1 min (60s)' : '15s'
         };
     }
 
