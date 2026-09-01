@@ -150,16 +150,17 @@ const AgendamentoModal: React.FC<{
     onClose: () => void;
     onSuccess: (msg: string) => void;
 }> = ({ sala, initialData, initialTurno, onClose, onSuccess }) => {
+    const defaultTurno = initialTurno === 'Matutino' ? 'Vespertino' : (initialTurno || 'Vespertino');
     const context = useContext(DataContext);
     const [data, setData] = useState(initialData || formatDateToBR(new Date()));
-    const [turno, setTurno] = useState(initialTurno || 'Matutino');
+    const [turno, setTurno] = useState(defaultTurno);
     const [solicitante, setSolicitante] = useState('');
     const [emailSolicitante, setEmailSolicitante] = useState('');
     const [turma, setTurma] = useState('');
     const [disciplina, setDisciplina] = useState('');
     const [motivo, setMotivo] = useState('');
-    const [horarioInicio, setHorarioInicio] = useState(getHorarioPadrao(initialTurno || 'Matutino').inicio);
-    const [horarioFim, setHorarioFim] = useState(getHorarioPadrao(initialTurno || 'Matutino').fim);
+    const [horarioInicio, setHorarioInicio] = useState(getHorarioPadrao(defaultTurno).inicio);
+    const [horarioFim, setHorarioFim] = useState(getHorarioPadrao(defaultTurno).fim);
     const [submitting, setSubmitting] = useState(false);
     const [errorNotice, setErrorNotice] = useState<string | null>(null);
 
@@ -307,7 +308,6 @@ const AgendamentoModal: React.FC<{
                                 onChange={e => handleTurnoChange(e.target.value)}
                                 className="bg-[#F8FAFC] border border-[#CBD5E1] p-3 rounded-xl text-xs font-bold outline-none focus:border-[#F4901E] text-[#0F2A52]"
                             >
-                                <option value="Matutino">Matutino (07:00 — 11:30)</option>
                                 <option value="Vespertino">Vespertino (13:00 — 17:30)</option>
                                 <option value="Noturno">Noturno (18:00 — 22:00)</option>
                             </select>
@@ -455,7 +455,7 @@ const SalaDetalhesModal: React.FC<{
         return dias;
     }, []);
 
-    const turnos = ['Matutino', 'Vespertino', 'Noturno'];
+    const turnos = ['Vespertino', 'Noturno'];
 
     return (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-3 sm:p-5 bg-[#0F2A52]/80 backdrop-blur-md">
@@ -539,7 +539,7 @@ const SalaDetalhesModal: React.FC<{
                                         )}
                                     </div>
 
-                                    {/* 3 Turnos do Dia */}
+                                    {/* 2 Turnos do Dia (Tarde e Noite) */}
                                     <div className="flex flex-col gap-2">
                                         {turnos.map(t => {
                                             const disp = context ? verificarDisponibilidadeSala(sala, dia.dataStr, t, context.aulas, context.agendamentos) : { status: 'livre', label: 'Livre' } as SalaDisponibilidade;
@@ -569,7 +569,7 @@ const SalaDetalhesModal: React.FC<{
                                                                 disp.status === 'pendente' ? 'bg-amber-500' :
                                                                 disp.status === 'reservada' ? 'bg-blue-500' : 'bg-red-500'
                                                             }`} />
-                                                            {t}
+                                                            {t === 'Vespertino' ? 'Tarde' : 'Noite'}
                                                         </span>
                                                         <span className="text-[10px] text-[#475569] font-medium truncate mt-0.5">
                                                             {disp.status === 'livre' && 'Disponível'}
@@ -610,7 +610,7 @@ const SalaDetalhesModal: React.FC<{
                         Ambiente: <strong className="text-[#0F2A52]">{formatarNomeSala(sala)}</strong>
                     </span>
                     <button 
-                        onClick={() => onOpenSolicitacao(sala, formatDateToBR(new Date()), 'Matutino')}
+                        onClick={() => onOpenSolicitacao(sala, formatDateToBR(new Date()), 'Vespertino')}
                         className="bg-[#F4901E] text-white px-5 py-2.5 rounded-xl font-black uppercase text-xs hover:bg-[#E67E22] transition-all shadow-md flex items-center gap-2"
                     >
                         <PlusCircleIcon className="w-4 h-4" />
@@ -641,7 +641,7 @@ const AgendamentoScreen: React.FC<{
         sala: string;
         data: string;
         turno: string;
-    }>({ open: false, sala: '', data: '', turno: 'Matutino' });
+    }>({ open: false, sala: '', data: '', turno: 'Vespertino' });
 
     const [modalDetalhesSala, setModalDetalhesSala] = useState<string | null>(null);
     const [feedbackBanner, setFeedbackBanner] = useState<string | null>(null);
@@ -653,18 +653,16 @@ const AgendamentoScreen: React.FC<{
     const salasComDisponibilidade = useMemo(() => {
         if (!context) return [];
         return salas.map(sala => {
-            const dispMatutino = verificarDisponibilidadeSala(sala, selectedDate, 'Matutino', context.aulas, context.agendamentos);
             const dispVespertino = verificarDisponibilidadeSala(sala, selectedDate, 'Vespertino', context.aulas, context.agendamentos);
             const dispNoturno = verificarDisponibilidadeSala(sala, selectedDate, 'Noturno', context.aulas, context.agendamentos);
 
             let dispFoco: SalaDisponibilidade;
-            if (selectedTurno === 'Matutino') dispFoco = dispMatutino;
-            else if (selectedTurno === 'Vespertino') dispFoco = dispVespertino;
+            if (selectedTurno === 'Vespertino') dispFoco = dispVespertino;
             else if (selectedTurno === 'Noturno') dispFoco = dispNoturno;
             else {
-                // Se turno for "todos", considera 'livre' se tiver pelo menos 1 turno livre
-                const temLivre = dispMatutino.status === 'livre' || dispVespertino.status === 'livre' || dispNoturno.status === 'livre';
-                const temPendente = dispMatutino.status === 'pendente' || dispVespertino.status === 'pendente' || dispNoturno.status === 'pendente';
+                // Se turno for "todos", considera 'livre' se tiver pelo menos 1 turno livre (Tarde ou Noite)
+                const temLivre = dispVespertino.status === 'livre' || dispNoturno.status === 'livre';
+                const temPendente = dispVespertino.status === 'pendente' || dispNoturno.status === 'pendente';
                 dispFoco = {
                     status: temLivre ? 'livre' : (temPendente ? 'pendente' : 'ocupada_aula'),
                     label: temLivre ? 'Com Horários Livres' : (temPendente ? 'Com Solicitação Pendente' : 'Ocupada em todos os turnos')
@@ -674,7 +672,6 @@ const AgendamentoScreen: React.FC<{
             return {
                 sala,
                 dispFoco,
-                dispMatutino,
                 dispVespertino,
                 dispNoturno,
             };
@@ -704,8 +701,8 @@ const AgendamentoScreen: React.FC<{
         // 1. Salas que possuem alguma ocupação (aula ou agendamento aprovado) ou pendência no dia selecionado aparecem primeiro
         // 2. Ordem alfabética natural do nome formatado da sala
         return [...filtered].sort((a, b) => {
-            const hasOcupacaoA = a.dispMatutino.status !== 'livre' || a.dispVespertino.status !== 'livre' || a.dispNoturno.status !== 'livre';
-            const hasOcupacaoB = b.dispMatutino.status !== 'livre' || b.dispVespertino.status !== 'livre' || b.dispNoturno.status !== 'livre';
+            const hasOcupacaoA = a.dispVespertino.status !== 'livre' || a.dispNoturno.status !== 'livre';
+            const hasOcupacaoB = b.dispVespertino.status !== 'livre' || b.dispNoturno.status !== 'livre';
 
             if (hasOcupacaoA && !hasOcupacaoB) return -1;
             if (!hasOcupacaoA && hasOcupacaoB) return 1;
@@ -748,101 +745,114 @@ const AgendamentoScreen: React.FC<{
                         className="h-7 md:h-9 w-auto object-contain"
                         referrerPolicy="no-referrer"
                     />
-                    <div className="h-6 w-px bg-[#E2E8F0]" />
-                    <h1 className="text-xs md:text-sm font-black uppercase text-[#0F2A52] tracking-tight">
-                        Agendamento de Salas
-                    </h1>
+                    <div className="h-6 w-px bg-[#CBD5E1] hidden sm:block" />
+                    <div>
+                        <h1 className="text-xs md:text-sm font-black uppercase tracking-wider text-[#0F2A52] leading-tight">
+                            Agendamento de Salas
+                        </h1>
+                        <p className="text-[10px] text-[#64748B] font-semibold hidden sm:block">
+                            Consulta em tempo real de disponibilidade e reserva de ambientes
+                        </p>
+                    </div>
                 </div>
 
-                {/* Relógio & Data no Header */}
-                <div className="flex flex-col text-right">
-                    <span className="text-xs md:text-sm font-black text-[#0F2A52] leading-none">{formattedTime}</span>
-                    <span className="text-[9px] font-bold uppercase text-[#6B7280] tracking-wider mt-0.5">{formattedDate}</span>
+                <div className="flex items-center gap-3">
+                    <div className="text-right hidden sm:block">
+                        <span className="text-xs font-black text-[#0F2A52] block leading-none">{formattedTime}</span>
+                        <span className="text-[10px] text-[#64748B] font-bold block mt-0.5">{formattedDate}</span>
+                    </div>
+
+                    <button
+                        onClick={onReturnToDashboard}
+                        className="px-3 py-1.5 md:px-4 md:py-2 bg-[#0F2A52] text-white rounded-xl text-xs font-black uppercase hover:bg-[#1D4E8C] transition-all flex items-center gap-1.5 shadow-xs"
+                    >
+                        <span>Voltar ao Painel</span>
+                    </button>
                 </div>
             </header>
 
-            {/* Banner de Feedback */}
+            {/* Banner de Feedback quando há sucesso */}
             <AnimatePresence>
                 {feedbackBanner && (
                     <motion.div 
-                        initial={{ opacity: 0, y: -20 }}
+                        initial={{ opacity: 0, y: -10 }}
                         animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -20 }}
-                        className="bg-emerald-600 text-white p-3.5 px-6 shadow-md flex items-center justify-between text-xs font-bold z-20"
+                        exit={{ opacity: 0, y: -10 }}
+                        className="bg-emerald-600 text-white px-4 py-3 text-xs font-bold text-center flex items-center justify-center gap-2 sticky top-[57px] z-20 shadow-md"
                     >
-                        <div className="flex items-center gap-2">
-                            <CheckCircleIcon className="w-4 h-4 text-emerald-200" />
-                            <span>{feedbackBanner}</span>
-                        </div>
-                        <button onClick={() => setFeedbackBanner(null)} className="text-white hover:opacity-80 p-1">
+                        <CheckCircleIcon className="w-4 h-4 flex-shrink-0" />
+                        <span>{feedbackBanner}</span>
+                        <button onClick={() => setFeedbackBanner(null)} className="ml-2 hover:opacity-75">
                             <XIcon className="w-4 h-4" />
                         </button>
                     </motion.div>
                 )}
             </AnimatePresence>
 
-            {/* Corpo Principal */}
-            <main className="flex-1 max-w-5xl mx-auto w-full p-3 sm:p-4 md:p-6 flex flex-col gap-4">
-
-                {/* Painel de Filtros e Busca */}
-                <div className="bg-white rounded-2xl md:rounded-3xl p-3.5 sm:p-5 md:p-6 border border-[#E2E8F0] shadow-xs flex flex-col gap-3.5">
-                    
-                    {/* Barra de Pesquisa de Salas */}
-                    <div className="relative flex items-center">
-                        <SearchIcon className="w-4 h-4 md:w-5 md:h-5 text-[#1D4E8C] absolute left-3.5 pointer-events-none" />
+            {/* Conteúdo Principal Otimizado */}
+            <main className="flex-1 max-w-6xl w-full mx-auto p-3.5 sm:p-5 md:p-6 flex flex-col gap-4">
+                {/* Barra de Filtros e Busca */}
+                <div className="bg-white rounded-2xl md:rounded-3xl p-3.5 sm:p-4 md:p-5 border border-[#E2E8F0] shadow-xs flex flex-col gap-3">
+                    {/* Campo de Busca por Sala */}
+                    <div className="relative">
+                        <SearchIcon className="w-4 h-4 text-[#94A3B8] absolute left-3.5 top-1/2 -translate-y-1/2" />
                         <input 
                             type="text"
                             placeholder="Buscar sala por nome (ex: LAB01, SALA 05, LAB04)..."
                             value={searchQuery}
                             onChange={e => setSearchQuery(e.target.value)}
-                            className="w-full pl-10 md:pl-12 pr-10 py-3 rounded-xl md:rounded-2xl bg-[#F8FAFC] border border-[#CBD5E1] text-xs md:text-sm font-bold text-[#0F2A52] outline-none focus:border-[#F4901E] focus:bg-white transition-all shadow-inner"
+                            className="w-full pl-10 pr-4 py-2.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl text-xs font-bold outline-none focus:border-[#F4901E] text-[#0F2A52] placeholder-[#94A3B8]"
                         />
                         {searchQuery && (
                             <button 
                                 onClick={() => setSearchQuery('')}
-                                className="absolute right-3.5 text-xs font-black text-[#64748B] hover:text-[#0F2A52]"
+                                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
                             >
-                                ✕
+                                <XIcon className="w-3.5 h-3.5" />
                             </button>
                         )}
                     </div>
 
-                    {/* Seletor de Datas Rápidas */}
-                    <div className="flex flex-col gap-2">
+                    {/* Seleção de Datas Rápidas */}
+                    <div className="flex flex-col gap-1">
                         <div className="flex items-center justify-between">
                             <label className="text-[10px] font-black uppercase text-[#64748B] tracking-wider">
                                 Data:
                             </label>
-                            <div className="flex items-center gap-1 text-xs">
-                                <span className="text-[#64748B] text-[10px] font-bold">Outra:</span>
+                            <div className="flex items-center gap-1.5">
+                                <span className="text-[10px] font-bold text-[#64748B]">Outra:</span>
                                 <input 
                                     type="date"
                                     value={formatBRToInputDate(selectedDate)}
-                                    onChange={e => setSelectedDate(formatInputDateToBR(e.target.value))}
-                                    className="bg-[#F8FAFC] border border-[#CBD5E1] px-2 py-0.5 rounded-lg text-xs font-bold text-[#0F2A52] outline-none focus:border-[#F4901E]"
+                                    onChange={e => e.target.value && setSelectedDate(formatInputDateToBR(e.target.value))}
+                                    className="bg-[#F8FAFC] border border-[#CBD5E1] px-2 py-0.5 rounded-lg text-[11px] font-bold text-[#0F2A52] outline-none"
                                 />
                             </div>
                         </div>
 
-                        {/* Scroll horizontal suave das datas para smartphone */}
-                        <div className="flex overflow-x-auto gap-2 pb-1 custom-scrollbar">
-                            {datasRapidas.map(d => (
-                                <button
-                                    key={d.dataStr}
-                                    onClick={() => setSelectedDate(d.dataStr)}
-                                    className={`px-3.5 py-2 rounded-xl text-xs font-bold transition-all flex-shrink-0 flex items-center gap-1.5 ${
-                                        selectedDate === d.dataStr
-                                        ? 'bg-[#0F2A52] text-white shadow-sm'
-                                        : 'bg-[#F8FAFC] border border-[#E2E8F0] text-[#64748B] hover:bg-[#F1F5F9] hover:text-[#0F2A52]'
-                                    }`}
-                                >
-                                    <CalendarIcon className="w-3.5 h-3.5" />
-                                    <span>{d.label}</span>
-                                    <span className={`text-[10px] px-1.5 py-0.2 rounded-md ${selectedDate === d.dataStr ? 'bg-white/20 text-white' : 'bg-slate-200 text-slate-700'}`}>
-                                        {d.diaMes}
-                                    </span>
-                                </button>
-                            ))}
+                        <div className="grid grid-cols-3 sm:grid-cols-6 gap-1.5">
+                            {datasRapidas.map((item) => {
+                                const isSelected = selectedDate === item.dataStr;
+                                return (
+                                    <button
+                                        key={item.dataStr}
+                                        onClick={() => setSelectedDate(item.dataStr)}
+                                        className={`py-2 px-1.5 rounded-xl border text-center transition-all flex flex-col items-center justify-center ${
+                                            isSelected 
+                                            ? 'bg-[#0F2A52] text-white border-[#0F2A52] shadow-xs' 
+                                            : 'bg-[#F8FAFC] text-[#0F2A52] border-[#E2E8F0] hover:border-[#CBD5E1]'
+                                        }`}
+                                    >
+                                        <div className="flex items-center gap-1">
+                                            <CalendarIcon className={`w-3 h-3 ${isSelected ? 'text-[#F4901E]' : 'text-[#64748B]'}`} />
+                                            <span className="text-[10px] font-black uppercase">{item.label}</span>
+                                        </div>
+                                        <span className={`text-[9px] font-bold mt-0.5 ${isSelected ? 'text-blue-200' : 'text-[#64748B]'}`}>
+                                            {item.diaMes}
+                                        </span>
+                                    </button>
+                                );
+                            })}
                         </div>
                     </div>
 
@@ -855,7 +865,6 @@ const AgendamentoScreen: React.FC<{
                             <div className="flex bg-[#F8FAFC] p-1 rounded-xl border border-[#E2E8F0] gap-1 overflow-x-auto">
                                 {[
                                     { id: 'todos', label: 'Todos' },
-                                    { id: 'Matutino', label: 'Manhã' },
                                     { id: 'Vespertino', label: 'Tarde' },
                                     { id: 'Noturno', label: 'Noite' },
                                 ].map(t => (
@@ -909,7 +918,7 @@ const AgendamentoScreen: React.FC<{
                             Ambientes / Salas ({salasFiltradas.length})
                         </span>
                         <span className="text-[11px] text-[#64748B]">
-                            {selectedDate} • {selectedTurno === 'todos' ? 'Todos os turnos' : selectedTurno}
+                            {selectedDate} • {selectedTurno === 'todos' ? 'Todos os turnos' : (selectedTurno === 'Vespertino' ? 'Tarde' : 'Noite')}
                         </span>
                     </div>
 
@@ -966,7 +975,7 @@ const AgendamentoScreen: React.FC<{
                                                     open: true,
                                                     sala: item.sala,
                                                     data: selectedDate,
-                                                    turno: selectedTurno === 'todos' ? 'Matutino' : selectedTurno
+                                                    turno: selectedTurno === 'todos' ? 'Vespertino' : selectedTurno
                                                 })}
                                                 className={`px-4 py-2 rounded-xl font-black uppercase text-xs transition-all flex items-center gap-1.5 shadow-xs ${
                                                     isLivre
@@ -980,10 +989,9 @@ const AgendamentoScreen: React.FC<{
                                         </div>
                                     </div>
 
-                                    {/* Indicadores dos 3 Turnos em Linha Horizontal Otimizada para Mobile */}
-                                    <div className="grid grid-cols-3 gap-1.5 pt-2 border-t border-[#F1F5F9]">
+                                    {/* Indicadores dos 2 Turnos em Linha Horizontal Otimizada para Mobile */}
+                                    <div className="grid grid-cols-2 gap-2 pt-2 border-t border-[#F1F5F9]">
                                         {[
-                                            { nome: 'Manhã', disp: item.dispMatutino, turnoKey: 'Matutino' },
                                             { nome: 'Tarde', disp: item.dispVespertino, turnoKey: 'Vespertino' },
                                             { nome: 'Noite', disp: item.dispNoturno, turnoKey: 'Noturno' },
                                         ].map(tObj => {
