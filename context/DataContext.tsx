@@ -1,6 +1,6 @@
 import React, { createContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { upload as vercelBlobUpload } from '@vercel/blob/client';
-import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType, AuditAction } from '../types';
+import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType, AuditAction, PainelClienteConfig } from '../types';
 import { db, storage, auth } from '../firebase';
 import { formatarUnidadeCurricular } from '../utils/curricularUnits';
 import { formatarNomeSala, CANONICAL_SALAS } from '../utils/roomFormatter';
@@ -145,12 +145,48 @@ const formatarDataCSV = (valor: any): string => {
   return valStr;
 };
 
+export const DEFAULT_PAINEL_CLIENTE_CONFIG: PainelClienteConfig = {
+  heroVideoSrc: "https://res.cloudinary.com/dlrdwblso/video/upload/v1785334173/WhatsApp_Video_2025-12-10_at_13.15.24_eku6g1.mp4",
+  heroPosterImage: "",
+  destaques: [
+    {
+      image: "/carrossel/1.png",
+      headline: "Educação que transforma indústrias e pessoas.",
+      highlightWord: "transforma",
+      logo: "",
+      tagline: "O futuro se constrói com conhecimento."
+    },
+    {
+      image: "/carrossel/2.png",
+      headline: "Inovação que impulsiona o crescimento do Brasil.",
+      highlightWord: "impulsiona",
+      logo: "",
+      tagline: "Tecnologia a serviço da indústria."
+    },
+    {
+      image: "/carrossel/3.png",
+      headline: "Capacitação que conecta talentos à indústria.",
+      highlightWord: "conecta",
+      logo: "",
+      tagline: "Formando profissionais do futuro."
+    }
+  ],
+  contactInfo: {
+    logoUrl: "https://res.cloudinary.com/dlrdwblso/image/upload/v1785334994/SENAI_COMPLETA_PREFERENCIAL_svm23u.png",
+    phone: "(27) 98818-2941",
+    whatsappUrl: "https://wa.me/5527988182941",
+    instagram: "@senaivitoria",
+    instagramUrl: "https://instagram.com/senaivitoria"
+  }
+};
+
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [aulas, setAulas] = useState<Aula[]>([]);
   const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
   const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [agendamentos, setAgendamentos] = useState<AgendamentoSala[]>([]);
   const [ambientesPersonalizados, setAmbientesPersonalizados] = useState<{ id: string; nome: string }[]>([]);
+  const [painelClienteConfig, setPainelClienteConfig] = useState<PainelClienteConfig>(DEFAULT_PAINEL_CLIENTE_CONFIG);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncSource, setSyncSource] = useState<string | null>(null);
@@ -429,6 +465,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.warn("Aviso listener agendamentos:", err);
     });
 
+    const painelClienteDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'painelCliente');
+    const unsubPainelCliente = onSnapshot(painelClienteDocRef, (snap) => {
+      if (snap.exists()) {
+        const data = snap.data();
+        setPainelClienteConfig(prev => ({
+          ...prev,
+          ...data,
+          destaques: Array.isArray(data.destaques) && data.destaques.length > 0 ? data.destaques : prev.destaques,
+          contactInfo: {
+            ...prev.contactInfo,
+            ...(data.contactInfo || {})
+          }
+        }));
+      }
+    }, (err) => {
+      console.warn("Aviso listener painelCliente:", err);
+    });
+
     return () => {
       unsubMeta();
       unsubAmbientes();
@@ -436,6 +490,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       unsubAnuncios();
       unsubAlunos();
       unsubAgendamentos();
+      unsubPainelCliente();
       clearTimeout(reloadTimeoutRef.current);
     };
   }, []);
@@ -1100,12 +1155,33 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  const updatePainelClienteConfig = async (newConfig: Partial<PainelClienteConfig>) => {
+    try {
+      const painelClienteDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'painelCliente');
+      const updated = {
+        ...painelClienteConfig,
+        ...newConfig,
+        updatedAt: serverTimestamp()
+      };
+      await setDoc(painelClienteDocRef, updated, { merge: true });
+      await registrarLog(
+        'EDITAR_PAINEL_CLIENTE',
+        'painelCliente',
+        'config',
+        'Configurações do Painel do Cliente / Recepção atualizadas'
+      );
+    } catch (e: any) {
+      console.error("Erro ao atualizar painelCliente:", e);
+      throw e;
+    }
+  };
+
   return (
     <DataContext.Provider value={{ 
-      aulas, anuncios, alunos, agendamentos, salasCadastradas, loading, error, isOffline,
+      aulas, anuncios, alunos, agendamentos, salasCadastradas, painelClienteConfig, loading, error, isOffline,
       addAula, updateAulasFromCSV, updateAula, deleteAula, 
       clearAulas, addAnuncio, deleteAnuncio, replaceAnuncio, reorderAnuncios, clearAllAnuncios,
-      uploadMediaFile, uploadCSV, syncSource,
+      uploadMediaFile, uploadCSV, syncSource, updatePainelClienteConfig,
       solicitarAgendamento, aprovarAgendamento, rejeitarAgendamento, excluirAgendamento,
       adicionarAmbiente, excluirAmbiente, registrarLog
     }}>

@@ -4,6 +4,13 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --animate-border-beam: border-beam calc(var(--duration)*1s) infinite linear;
+}
+
+@keyframes border-beam {
+  100% {
+    offset-distance: 100%;
+  }
 }
 
 :root {

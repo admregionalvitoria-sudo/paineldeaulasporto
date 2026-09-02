@@ -5,13 +5,14 @@ import MediaScreen from './components/MediaScreen';
 import AgendamentoScreen from './components/AgendamentoScreen';
 import UserManagementScreen from './components/UserManagementScreen';
 import AuditLogsScreen from './components/AuditLogsScreen';
+import PainelClienteScreen from './components/PainelClienteScreen';
 import OfflineScreen from './components/OfflineScreen';
 import ProtectedRoute from './components/ProtectedRoute';
 import { DataProvider, DataContext } from './context/DataContext';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 
-export type AppView = 'dashboard' | 'admin' | 'midia' | 'agendamento' | 'usuarios' | 'logs';
+export type AppView = 'dashboard' | 'admin' | 'midia' | 'agendamento' | 'usuarios' | 'logs' | 'painelcliente';
 
 const AppContent: React.FC<{
   view: AppView;
@@ -48,6 +49,8 @@ const AppContent: React.FC<{
           onReturnToDashboard={() => navigateTo('dashboard')} 
           onGoToAdmin={() => navigateTo('admin')} 
         />
+      ) : view === 'painelcliente' ? (
+        <PainelClienteScreen onReturnToDashboard={() => navigateTo('dashboard')} />
       ) : (
         <DashboardScreen 
           onAdminClick={() => navigateTo('admin')} 
@@ -78,6 +81,9 @@ function App() {
     if (path.startsWith('/agendamento') || hash === '#agendamento' || hash === '#/agendamento') {
       return 'agendamento';
     }
+    if (path.startsWith('/painelcliente') || path.startsWith('/cliente') || path.startsWith('/recepcao') || hash === '#painelcliente' || hash === '#/painelcliente') {
+      return 'painelcliente';
+    }
     return 'dashboard';
   };
 
@@ -98,6 +104,8 @@ function App() {
         setView('logs');
       } else if (path.startsWith('/agendamento') || hash === '#agendamento' || hash === '#/agendamento') {
         setView('agendamento');
+      } else if (path.startsWith('/painelcliente') || path.startsWith('/cliente') || path.startsWith('/recepcao') || hash === '#painelcliente' || hash === '#/painelcliente') {
+        setView('painelcliente');
       } else {
         setView('dashboard');
       }
@@ -118,7 +126,8 @@ function App() {
       midia: '/midia',
       usuarios: '/usuarios',
       logs: '/logs',
-      agendamento: '/agendamento'
+      agendamento: '/agendamento',
+      painelcliente: '/painelcliente'
     };
 
     const targetPath = routeMap[target] || '/';

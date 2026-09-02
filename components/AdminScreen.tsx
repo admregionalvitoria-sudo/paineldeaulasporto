@@ -796,10 +796,19 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
             <span>Agendamento</span>
           </button>
 
+          <button
+            onClick={() => onNavigate ? onNavigate('painelcliente') : (window.location.pathname = '/painelcliente')}
+            className="bg-white border border-[#CBD5E1] text-[#0F2A52] px-4 py-2.5 rounded-xl font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-[#F1F5F9] transition-all shadow-xs"
+            title="Abrir Painel de Vídeo para Clientes / Recepção"
+          >
+            <Layers className="w-4 h-4 text-purple-600" />
+            <span>Painel Cliente</span>
+          </button>
+
           <button 
             onClick={logout} 
             title="Encerrar Sessão" 
-            className="p-2.5 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-xl transition-colors border border-red-200"
+            className="p-2.5 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-xl transition-colors border border-red-200 cursor-pointer"
           >
             <LogOut className="w-4 h-4" />
           </button>

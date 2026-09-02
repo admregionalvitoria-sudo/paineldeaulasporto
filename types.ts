@@ -58,6 +58,29 @@ export interface AgendamentoSala {
   criarAulaAoAprovar?: boolean;
 }
 
+export interface DestaqueSlide {
+  image: string;
+  headline?: string;
+  highlightWord?: string;
+  logo?: string;
+  tagline?: string;
+}
+
+export interface ContactInfo {
+  logoUrl: string;
+  phone: string;
+  whatsappUrl: string;
+  instagram: string;
+  instagramUrl: string;
+}
+
+export interface PainelClienteConfig {
+  heroVideoSrc: string;
+  heroPosterImage?: string;
+  destaques: DestaqueSlide[];
+  contactInfo: ContactInfo;
+}
+
 export interface DataContextType {
   aulas: Aula[];
   anuncios: Anuncio[];
@@ -65,6 +88,7 @@ export interface DataContextType {
   agendamentos: AgendamentoSala[];
   salasCadastradas: string[];
   ambientesPersonalizados?: string[];
+  painelClienteConfig?: PainelClienteConfig;
   loading: boolean;
   error: string | null;
   isOffline?: boolean;
@@ -80,6 +104,7 @@ export interface DataContextType {
   reorderAnuncios: (orderedAnuncios: Anuncio[]) => Promise<void>;
   clearAllAnuncios: () => Promise<void>;
   uploadMediaFile: (file: File) => Promise<{ src: string; type: 'image' | 'video'; storagePath?: string; name: string }>;
+  updatePainelClienteConfig?: (config: Partial<PainelClienteConfig>) => Promise<void>;
   solicitarAgendamento: (dados: Omit<AgendamentoSala, 'id' | 'status' | 'criadoEm'>) => Promise<string>;
   aprovarAgendamento: (id: string, criarAulaAutomatica?: boolean, aprovador?: string) => Promise<void>;
   rejeitarAgendamento: (id: string, motivoRejeicao?: string) => Promise<void>;
