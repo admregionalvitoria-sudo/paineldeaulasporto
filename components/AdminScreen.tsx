@@ -1,6 +1,6 @@
 import React, { useState, useContext, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { DataContext, ExtendedDataContextType, normalizarNomeAmbiente } from '../context/DataContext';
+import { DataContext, ExtendedDataContextType, normalizarNomeAmbiente, calcularTurnoPorHorario } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { Aula, AgendamentoSala } from '../types';
 import { formatarUnidadeCurricular, CANONICAL_UNIDADES_CURRICULARES } from '../utils/curricularUnits';
@@ -40,8 +40,20 @@ const EditModal: React.FC<{
   onClose: () => void;
   onSave: (d: Partial<Aula>) => void;
 }> = ({ aula, onClose, onSave }) => {
-  const [formData, setFormData] = useState<Aula>({ ...aula });
+  const [formData, setFormData] = useState<Aula>({ 
+    ...aula,
+    turno: aula.turno || (aula.inicio ? calcularTurnoPorHorario(aula.inicio) : 'Vespertino')
+  });
   const [erro, setErro] = useState<string | null>(null);
+
+  const handleInicioChange = (novoInicio: string) => {
+    const turnoDetectado = calcularTurnoPorHorario(novoInicio);
+    setFormData(prev => ({
+      ...prev,
+      inicio: novoInicio,
+      turno: turnoDetectado
+    }));
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -138,8 +150,8 @@ const EditModal: React.FC<{
             <input 
               required
               value={formData.inicio}
-              onChange={e => setFormData({ ...formData, inicio: e.target.value })}
-              placeholder="08:00"
+              onChange={e => handleInicioChange(e.target.value)}
+              placeholder="13:30"
               className="bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
             />
           </div>
@@ -149,12 +161,34 @@ const EditModal: React.FC<{
             <input 
               value={formData.fim || ''}
               onChange={e => setFormData({ ...formData, fim: e.target.value })}
-              placeholder="12:00"
+              placeholder="17:30"
               className="bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
             />
           </div>
 
-          <div className="md:col-span-2 flex flex-col gap-1">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider flex items-center justify-between">
+              <span>Turno da Aula</span>
+              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${
+                formData.turno === 'Vespertino' ? 'bg-amber-100 text-amber-800' :
+                formData.turno === 'Noturno' ? 'bg-indigo-100 text-indigo-800' :
+                'bg-sky-100 text-sky-800'
+              }`}>
+                {formData.turno === 'Vespertino' ? 'Tarde' : formData.turno === 'Noturno' ? 'Noite' : 'Manhã'}
+              </span>
+            </label>
+            <select
+              value={formData.turno || 'Vespertino'}
+              onChange={e => setFormData({ ...formData, turno: e.target.value })}
+              className="bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52] font-semibold"
+            >
+              <option value="Vespertino">Vespertino (Tarde: 11:50 — 17:50)</option>
+              <option value="Noturno">Noturno (Noite: 17:50 — 22:30)</option>
+              <option value="Matutino">Matutino (Manhã: 06:00 — 11:50)</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
             <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider">Unidade Curricular</label>
             <input 
               list="canonical-uc-list"
@@ -197,11 +231,20 @@ const AddModal: React.FC<{
     turma: '',
     instrutor: '',
     unidade_curricular: '',
-    inicio: '08:00',
-    fim: '12:00',
-    turno: 'Matutino',
+    inicio: '13:30',
+    fim: '17:30',
+    turno: 'Vespertino',
   });
   const [erro, setErro] = useState<string | null>(null);
+
+  const handleInicioChange = (novoInicio: string) => {
+    const turnoDetectado = calcularTurnoPorHorario(novoInicio);
+    setFormData(prev => ({
+      ...prev,
+      inicio: novoInicio,
+      turno: turnoDetectado
+    }));
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -209,7 +252,11 @@ const AddModal: React.FC<{
       setErro("Preencha todos os campos obrigatórios.");
       return;
     }
-    onSave(formData);
+    const finalTurno = formData.turno || (formData.inicio ? calcularTurnoPorHorario(formData.inicio) : 'Vespertino');
+    onSave({
+      ...formData,
+      turno: finalTurno
+    });
   };
 
   return (
@@ -299,9 +346,9 @@ const AddModal: React.FC<{
             <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider">Horário Início *</label>
             <input 
               required
-              placeholder="08:00"
+              placeholder="13:30"
               value={formData.inicio}
-              onChange={e => setFormData({ ...formData, inicio: e.target.value })}
+              onChange={e => handleInicioChange(e.target.value)}
               className="bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
             />
           </div>
@@ -309,14 +356,36 @@ const AddModal: React.FC<{
           <div className="flex flex-col gap-1">
             <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider">Horário Fim</label>
             <input 
-              placeholder="12:00"
+              placeholder="17:30"
               value={formData.fim || ''}
               onChange={e => setFormData({ ...formData, fim: e.target.value })}
               className="bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
             />
           </div>
 
-          <div className="md:col-span-2 flex flex-col gap-1">
+          <div className="flex flex-col gap-1">
+            <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider flex items-center justify-between">
+              <span>Turno da Aula</span>
+              <span className={`text-[9px] font-black px-2 py-0.5 rounded-full uppercase ${
+                formData.turno === 'Vespertino' ? 'bg-amber-100 text-amber-800' :
+                formData.turno === 'Noturno' ? 'bg-indigo-100 text-indigo-800' :
+                'bg-sky-100 text-sky-800'
+              }`}>
+                {formData.turno === 'Vespertino' ? 'Tarde' : formData.turno === 'Noturno' ? 'Noite' : 'Manhã'}
+              </span>
+            </label>
+            <select
+              value={formData.turno || 'Vespertino'}
+              onChange={e => setFormData({ ...formData, turno: e.target.value })}
+              className="bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52] font-semibold"
+            >
+              <option value="Vespertino">Vespertino (Tarde: 11:50 — 17:50)</option>
+              <option value="Noturno">Noturno (Noite: 17:50 — 22:30)</option>
+              <option value="Matutino">Matutino (Manhã: 06:00 — 11:50)</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1">
             <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider">Unidade Curricular</label>
             <input 
               list="canonical-uc-list-add"
@@ -1015,7 +1084,14 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
                       <td className="py-3 px-4 text-[#64748B] max-w-[220px] truncate">{aula.unidade_curricular || '—'}</td>
                       <td className="py-3 px-4 text-[#0F2A52] font-mono text-[11px]">{aula.data}</td>
                       <td className="py-3 px-4 font-bold text-[#0F2A52]">
-                        {aula.inicio} {aula.fim ? `- ${aula.fim}` : ''}
+                        <div>{aula.inicio} {aula.fim ? `- ${aula.fim}` : ''}</div>
+                        <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
+                          aula.turno === 'Vespertino' ? 'bg-amber-100 text-amber-800 border border-amber-300' :
+                          aula.turno === 'Noturno' ? 'bg-indigo-100 text-indigo-800 border border-indigo-300' :
+                          'bg-sky-100 text-sky-800 border border-sky-300'
+                        }`}>
+                          {aula.turno === 'Vespertino' ? 'Tarde' : aula.turno === 'Noturno' ? 'Noite' : 'Manhã'}
+                        </span>
                       </td>
                       <td className="py-3 px-4 text-right">
                         <div className="flex items-center justify-end gap-1.5">

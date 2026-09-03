@@ -99,12 +99,25 @@ const fileToDataUrl = (file: File): Promise<string> => {
   });
 };
 
-const calcularTurnoPorHorario = (horarioStr: string): string => {
-    if (!horarioStr || !horarioStr.includes(':')) return 'Matutino';
-    const [horas, minutos] = horarioStr.split(':').map(Number);
+export const calcularTurnoPorHorario = (horarioStr: string): string => {
+    if (!horarioStr) return 'Vespertino';
+    const cleaned = String(horarioStr).trim().toLowerCase().replace('h', ':');
+    let horas = 0;
+    let minutos = 0;
+    if (cleaned.includes(':')) {
+        const parts = cleaned.split(':').map(p => parseInt(p, 10));
+        horas = isNaN(parts[0]) ? 13 : parts[0];
+        minutos = isNaN(parts[1]) ? 0 : parts[1];
+    } else {
+        horas = parseInt(cleaned, 10);
+        if (isNaN(horas)) return 'Vespertino';
+    }
     const totalMinutos = (horas * 60) + (minutos || 0);
+    // 06:00 até 11:49:59 (360 até 709 minutos) -> Matutino
     if (totalMinutos >= 360 && totalMinutos < 710) return 'Matutino';
+    // 11:50 até 17:49:59 (710 até 1069 minutos) -> Vespertino
     if (totalMinutos >= 710 && totalMinutos < 1070) return 'Vespertino';
+    // 17:50 até 05:59:59 -> Noturno
     return 'Noturno';
 };
 
@@ -372,14 +385,26 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const d = docSnap.data();
         const formattedUC = formatarUnidadeCurricular(d.unidade_curricular);
         const formattedSala = formatarNomeSala(d.sala) || d.sala || '';
+        const turnoCorreto = d.inicio ? calcularTurnoPorHorario(d.inicio) : (d.turno || 'Vespertino');
         
-        if ((d.unidade_curricular !== formattedUC || (formattedSala && d.sala !== formattedSala)) && navigator.onLine) {
+        const precisaAtualizarUC = d.unidade_curricular !== formattedUC;
+        const precisaAtualizarSala = formattedSala && d.sala !== formattedSala;
+        const precisaAtualizarTurno = d.inicio && d.turno !== turnoCorreto;
+
+        if ((precisaAtualizarUC || precisaAtualizarSala || precisaAtualizarTurno) && navigator.onLine) {
+          const payload: any = {};
+          if (precisaAtualizarUC) {
+            payload.unidade_curricular = formattedUC;
+            payload.descricao = formattedUC;
+          }
+          if (precisaAtualizarSala) {
+            payload.sala = formattedSala;
+          }
+          if (precisaAtualizarTurno) {
+            payload.turno = turnoCorreto;
+          }
           batchUpdates.push(
-            updateDoc(docSnap.ref, { 
-              unidade_curricular: formattedUC, 
-              descricao: formattedUC,
-              sala: formattedSala
-            }).catch(() => {})
+            updateDoc(docSnap.ref, payload).catch(() => {})
           );
         }
 
@@ -387,10 +412,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           ...d,
           id: docSnap.id,
           unidade_curricular: formattedUC,
-          sala: formattedSala
+          sala: formattedSala,
+          turno: turnoCorreto
         };
       }) as Aula[];
-      const currentHash = aulasData.map(a => `${a.id}_${a.turma}_${a.sala}_${a.inicio}_${a.unidade_curricular}`).join('|');
+      const currentHash = aulasData.map(a => `${a.id}_${a.turma}_${a.sala}_${a.inicio}_${a.turno}_${a.unidade_curricular}`).join('|');
 
       setAulas(aulasData);
       setLoading(false);
@@ -918,7 +944,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const aulaAtual = aulas.find(a => a.id === id);
       const novaSala = formatarNomeSala(aula.sala || aulaAtual?.sala || '');
       const novaData = aula.data || aulaAtual?.data || '';
-      const novoTurno = aula.turno || (aula.inicio ? calcularTurnoPorHorario(aula.inicio) : aulaAtual?.turno) || 'Matutino';
+      const novoTurno = aula.inicio 
+        ? calcularTurnoPorHorario(aula.inicio) 
+        : (aula.turno || aulaAtual?.turno || 'Vespertino');
 
       const conflito = verificarConflitoAmbiente(novaSala, novaData, novoTurno, id);
       if (conflito) {
@@ -927,7 +955,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         throw new Error(msg);
       }
 
-      const sanitizedAula = { ...aula };
+      const sanitizedAula: Partial<Aula> = { ...aula, turno: novoTurno };
       if (sanitizedAula.sala) {
         sanitizedAula.sala = formatarNomeSala(sanitizedAula.sala);
       }
@@ -944,7 +972,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         'EDITAR_AULA',
         'aula',
         id,
-        `Horário/dados alterados para a turma ${sanitizedAula.turma || aulaAtual?.turma} no ambiente ${novaSala}`
+        `Horário/dados alterados para a turma ${sanitizedAula.turma || aulaAtual?.turma} no ambiente ${novaSala} (${novoTurno})`
       );
     } catch (e: any) {
       console.error(e);
@@ -975,7 +1003,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const addAula = async (aulaData: Omit<Aula, 'id'>) => { 
     try {
       const formattedSala = formatarNomeSala(aulaData.sala) || aulaData.sala;
-      const turnoCalculado = aulaData.turno || (aulaData.inicio ? calcularTurnoPorHorario(aulaData.inicio) : 'Matutino');
+      const turnoCalculado = aulaData.inicio 
+        ? calcularTurnoPorHorario(aulaData.inicio) 
+        : (aulaData.turno || 'Vespertino');
 
       const conflito = verificarConflitoAmbiente(formattedSala, aulaData.data, turnoCalculado);
       if (conflito) {
