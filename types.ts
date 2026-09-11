@@ -81,6 +81,14 @@ export interface PainelClienteConfig {
   contactInfo: ContactInfo;
 }
 
+export interface ObservacaoLimpeza {
+  id?: string;
+  sala: string;
+  observacao: string;
+  atualizadoEm?: any;
+  atualizadoPor?: string;
+}
+
 export interface DataContextType {
   aulas: Aula[];
   anuncios: Anuncio[];
@@ -89,6 +97,7 @@ export interface DataContextType {
   salasCadastradas: string[];
   ambientesPersonalizados?: string[];
   painelClienteConfig?: PainelClienteConfig;
+  observacoesLimpeza?: Record<string, ObservacaoLimpeza>;
   loading: boolean;
   error: string | null;
   isOffline?: boolean;
@@ -111,6 +120,8 @@ export interface DataContextType {
   excluirAgendamento: (id: string) => Promise<void>;
   adicionarAmbiente: (nome: string) => Promise<void>;
   excluirAmbiente: (nome: string) => Promise<void>;
+  salvarObservacaoLimpeza?: (sala: string, observacao: string) => Promise<void>;
+  removerObservacaoLimpeza?: (sala: string) => Promise<void>;
   registrarLog: (acao: AuditAction, entidadeTipo: string, entidadeId: string, detalhes?: string, antes?: any, depois?: any) => Promise<void>;
 }
 

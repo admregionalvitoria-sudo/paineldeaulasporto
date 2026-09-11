@@ -26,7 +26,10 @@ import {
   AlertTriangle,
   Layers,
   DoorOpen,
-  ArrowRight
+  ArrowRight,
+  Broom,
+  MessageSquare,
+  ExternalLink
 } from 'lucide-react';
 
 interface AdminScreenProps {
@@ -749,11 +752,356 @@ const AgendamentosAdminSection: React.FC = () => {
   );
 };
 
+// Aba de Gestão de Limpeza e Observações dos Ambientes
+const LimpezaManagementSection: React.FC<{ onNavigate?: (route: string) => void }> = ({ onNavigate }) => {
+  const context = useContext(DataContext);
+  const [busca, setBusca] = useState('');
+  const [filtroTipo, setFiltroTipo] = useState<'com_aula' | 'com_observacao' | 'todas'>('com_aula');
+  const [editingSalas, setEditingSalas] = useState<Record<string, string>>({});
+  const [savingSala, setSavingSala] = useState<string | null>(null);
+  const [feedback, setFeedback] = useState<{ sala: string; msg: string; tipo: 'sucesso' | 'erro' } | null>(null);
+
+  const todayStr = useMemo(() => {
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    return `${day}/${month}/${year}`;
+  }, []);
+
+  const salas = context?.salasCadastradas || [];
+  const aulasHoje = useMemo(() => {
+    return (context?.aulas || []).filter(a => (a.data || '').trim() === todayStr);
+  }, [context?.aulas, todayStr]);
+
+  // Map das aulas de hoje por sala normalizada
+  const aulasPorSala = useMemo(() => {
+    const map = new Map<string, Aula[]>();
+    aulasHoje.forEach(a => {
+      if (!a.sala) return;
+      const norm = normalizarNomeAmbiente(a.sala);
+      if (!map.has(norm)) map.set(norm, []);
+      map.get(norm)!.push(a);
+    });
+    return map;
+  }, [aulasHoje]);
+
+  const observacoes = context?.observacoesLimpeza || {};
+
+  const handleSalvar = async (sala: string) => {
+    const norm = normalizarNomeAmbiente(sala);
+    const texto = editingSalas[norm] !== undefined ? editingSalas[norm] : (observacoes[norm]?.observacao || '');
+    setSavingSala(sala);
+    setFeedback(null);
+    try {
+      if (context?.salvarObservacaoLimpeza) {
+        await context.salvarObservacaoLimpeza(sala, texto);
+        setFeedback({ sala, msg: texto.trim() ? 'Observação salva com sucesso!' : 'Observação removida!', tipo: 'sucesso' });
+      }
+    } catch (err: any) {
+      setFeedback({ sala, msg: 'Erro ao salvar observação: ' + err.message, tipo: 'erro' });
+    } finally {
+      setSavingSala(null);
+      setTimeout(() => setFeedback(null), 4000);
+    }
+  };
+
+  const handleRemover = async (sala: string) => {
+    const norm = normalizarNomeAmbiente(sala);
+    setSavingSala(sala);
+    setFeedback(null);
+    try {
+      if (context?.removerObservacaoLimpeza) {
+        await context.removerObservacaoLimpeza(sala);
+        setEditingSalas(prev => ({ ...prev, [norm]: '' }));
+        setFeedback({ sala, msg: 'Observação removida com sucesso!', tipo: 'sucesso' });
+      }
+    } catch (err: any) {
+      setFeedback({ sala, msg: 'Erro ao remover observação.', tipo: 'erro' });
+    } finally {
+      setSavingSala(null);
+      setTimeout(() => setFeedback(null), 4000);
+    }
+  };
+
+  const handleAplicarSugestao = (norm: string, tag: string) => {
+    setEditingSalas(prev => {
+      const atual = prev[norm] !== undefined ? prev[norm] : (observacoes[norm]?.observacao || '');
+      const novo = atual ? `${atual} • ${tag}` : tag;
+      return { ...prev, [norm]: novo };
+    });
+  };
+
+  // Filtragem das salas
+  const salasFiltradas = useMemo(() => {
+    return salas.filter(sala => {
+      const norm = normalizarNomeAmbiente(sala);
+      const hasAulas = (aulasPorSala.get(norm) || []).length > 0;
+      const hasObs = !!observacoes[norm]?.observacao;
+
+      if (filtroTipo === 'com_aula' && !hasAulas) return false;
+      if (filtroTipo === 'com_observacao' && !hasObs) return false;
+
+      if (busca.trim()) {
+        const termo = busca.toLowerCase();
+        const nomeFormatado = (formatarNomeSala(sala) || sala).toLowerCase();
+        const obsTexto = (observacoes[norm]?.observacao || '').toLowerCase();
+        return nomeFormatado.includes(termo) || obsTexto.includes(termo);
+      }
+      return true;
+    }).sort((a, b) => {
+      const normA = normalizarNomeAmbiente(a);
+      const normB = normalizarNomeAmbiente(b);
+      const hasObsA = !!observacoes[normA]?.observacao;
+      const hasObsB = !!observacoes[normB]?.observacao;
+      if (hasObsA && !hasObsB) return -1;
+      if (!hasObsA && hasObsB) return 1;
+      return a.localeCompare(b, 'pt-BR', { numeric: true });
+    });
+  }, [salas, aulasPorSala, observacoes, filtroTipo, busca]);
+
+  const sugestoesRapidas = [
+    '🧹 Limpeza prioritária requerida',
+    '⚠️ Piso escorregadio / Manutenção',
+    '🧻 Repor materiais (papel/álcool/sabão)',
+    '🟢 Sala liberada antecipadamente',
+    '🗑️ Descarte de resíduos especiais'
+  ];
+
+  return (
+    <div className="space-y-6">
+      {/* Banner Informativo */}
+      <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 text-xs text-amber-900">
+        <div className="flex items-start gap-3">
+          <Broom className="w-5 h-5 text-[#F4901E] shrink-0 mt-0.5" />
+          <div>
+            <span className="font-black uppercase tracking-wider block text-[#0F2A52]">
+              Painel de Observações para Limpeza & Conservação
+            </span>
+            <span className="text-amber-800">
+              Escreva observações específicas para os ambientes de aula. As alterações são sincronizadas em tempo real e visualizadas pela equipe operacional no painel <strong>/limpeza</strong>.
+            </span>
+          </div>
+        </div>
+        <button
+          onClick={() => onNavigate ? onNavigate('limpeza') : (window.location.pathname = '/limpeza')}
+          className="shrink-0 bg-[#0F2A52] hover:bg-[#1D4E8C] text-white px-4 py-2 rounded-xl font-bold uppercase text-[10px] flex items-center gap-2 transition-all shadow-xs cursor-pointer"
+        >
+          <ExternalLink className="w-3.5 h-3.5 text-[#F4901E]" />
+          <span>Ver Painel /limpeza</span>
+        </button>
+      </div>
+
+      {/* Barra de Filtros e Busca */}
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-2 bg-[#F1F5F9] p-1.5 rounded-2xl">
+          <button
+            onClick={() => setFiltroTipo('com_aula')}
+            className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+              filtroTipo === 'com_aula'
+                ? 'bg-white text-[#0F2A52] shadow-xs'
+                : 'text-[#64748B] hover:text-[#0F2A52]'
+            }`}
+          >
+            Com Aula Hoje ({Array.from(aulasPorSala.keys()).length})
+          </button>
+          <button
+            onClick={() => setFiltroTipo('com_observacao')}
+            className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-1.5 cursor-pointer ${
+              filtroTipo === 'com_observacao'
+                ? 'bg-[#F4901E] text-white shadow-xs'
+                : 'text-[#F4901E] hover:bg-amber-50'
+            }`}
+          >
+            <AlertTriangle className="w-3.5 h-3.5" />
+            Com Observação ({Object.keys(observacoes).filter(k => !!observacoes[k]?.observacao).length})
+          </button>
+          <button
+            onClick={() => setFiltroTipo('todas')}
+            className={`px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider transition-all cursor-pointer ${
+              filtroTipo === 'todas'
+                ? 'bg-white text-[#0F2A52] shadow-xs'
+                : 'text-[#64748B] hover:text-[#0F2A52]'
+            }`}
+          >
+            Todas as Salas ({salas.length})
+          </button>
+        </div>
+
+        <div className="relative w-full sm:w-72">
+          <Search className="w-4 h-4 text-[#1D4E8C] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+          <input
+            type="text"
+            placeholder="Pesquisar sala ou observação..."
+            value={busca}
+            onChange={(e) => setBusca(e.target.value)}
+            className="w-full pl-9 pr-4 py-2 rounded-xl border border-[#E5E7EB] bg-[#F8FAFC] text-xs font-bold text-[#0F2A52] placeholder-[#6B7280] focus:border-[#F4901E] outline-none"
+          />
+        </div>
+      </div>
+
+      {/* Lista de Ambientes com Editor de Observação */}
+      <div className="grid grid-cols-1 gap-4">
+        {salasFiltradas.map(sala => {
+          const norm = normalizarNomeAmbiente(sala);
+          const nomeFormatado = formatarNomeSala(sala) || sala;
+          const obsData = observacoes[norm];
+          const valorInput = editingSalas[norm] !== undefined ? editingSalas[norm] : (obsData?.observacao || '');
+          const aulasDaSala = aulasPorSala.get(norm) || [];
+          const isSaving = savingSala === sala;
+          const fb = feedback?.sala === sala ? feedback : null;
+
+          return (
+            <div
+              key={sala}
+              className={`p-5 rounded-3xl border bg-white transition-all shadow-xs flex flex-col md:flex-row gap-5 items-start justify-between ${
+                obsData?.observacao
+                  ? 'border-[#F4901E] ring-1 ring-[#F4901E]/20'
+                  : 'border-[#E2E8F0]'
+              }`}
+            >
+              {/* Esquerda: Identificação da Sala e Horários de Hoje */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-[10px] font-black uppercase tracking-wider text-[#F4901E] flex items-center gap-1">
+                    <DoorOpen className="w-3.5 h-3.5" />
+                    Ambiente
+                  </span>
+                  {obsData?.observacao && (
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-amber-100 text-amber-900 border border-amber-300">
+                      Observação Ativa
+                    </span>
+                  )}
+                  {aulasDaSala.length > 0 ? (
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200">
+                      {aulasDaSala.length} aula(s) hoje
+                    </span>
+                  ) : (
+                    <span className="px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider bg-slate-100 text-slate-600">
+                      Sem aulas hoje
+                    </span>
+                  )}
+                </div>
+
+                <h3 className="text-base sm:text-lg font-black uppercase text-[#0F2A52] tracking-tight leading-tight">
+                  {nomeFormatado}
+                </h3>
+
+                {/* Resumo dos Horários de Aula do Dia */}
+                {aulasDaSala.length > 0 ? (
+                  <div className="flex flex-wrap gap-1.5 mt-2.5">
+                    {aulasDaSala.map((a, i) => (
+                      <span
+                        key={i}
+                        className="inline-flex items-center gap-1.5 text-[10px] font-bold bg-[#F8FAFC] border border-[#E2E8F0] px-2.5 py-1 rounded-lg text-[#374151]"
+                      >
+                        <Clock className="w-3 h-3 text-[#F4901E]" />
+                        <span>{a.inicio} - {a.fim || a.turno}</span>
+                        <span className="text-[#0F2A52] font-black">({a.turma})</span>
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-[11px] text-[#6B7280] mt-1 italic">
+                    Nenhuma turma alocada para hoje nesta sala.
+                  </p>
+                )}
+
+                {obsData?.atualizadoEm && (
+                  <p className="text-[10px] text-[#6B7280] mt-2">
+                    Última atualização: {obsData.atualizadoPor || 'Gestor'}
+                  </p>
+                )}
+              </div>
+
+              {/* Direita: Editor de Observação */}
+              <div className="w-full md:w-[480px] flex flex-col gap-2 shrink-0 bg-[#F8FAFC] p-4 rounded-2xl border border-[#E2E8F0]">
+                <div className="flex items-center justify-between">
+                  <label className="text-[10px] font-black uppercase tracking-wider text-[#6B7280] flex items-center gap-1.5">
+                    <MessageSquare className="w-3.5 h-3.5 text-[#1D4E8C]" />
+                    Observação do Ambiente (Visível na /limpeza)
+                  </label>
+                  {obsData?.observacao && (
+                    <button
+                      onClick={() => handleRemover(sala)}
+                      disabled={isSaving}
+                      className="text-[10px] font-bold text-red-600 hover:text-red-800 hover:underline flex items-center gap-1 cursor-pointer"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                      Remover Observação
+                    </button>
+                  )}
+                </div>
+
+                <textarea
+                  rows={2}
+                  placeholder="Ex: Piso molhado perto da porta, favor higienizar com cuidado. Bancadas desinfetadas..."
+                  value={valorInput}
+                  onChange={(e) => setEditingSalas(prev => ({ ...prev, [norm]: e.target.value }))}
+                  className="w-full p-2.5 rounded-xl border border-[#CBD5E1] bg-white text-xs text-[#0F2A52] font-medium outline-none focus:border-[#F4901E] focus:ring-1 focus:ring-[#F4901E] transition-all resize-none"
+                />
+
+                {/* Chips de Sugestões Rápidas */}
+                <div className="flex flex-wrap gap-1">
+                  {sugestoesRapidas.map((sugestao, i) => (
+                    <button
+                      key={i}
+                      type="button"
+                      onClick={() => handleAplicarSugestao(norm, sugestao)}
+                      className="text-[9px] font-bold bg-white hover:bg-amber-50 text-[#0F2A52] border border-[#E2E8F0] px-2 py-0.5 rounded-md transition-colors cursor-pointer"
+                    >
+                      {sugestao}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Feedback */}
+                {fb && (
+                  <div className={`p-2 rounded-lg text-xs font-bold flex items-center gap-1.5 ${
+                    fb.tipo === 'sucesso' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' : 'bg-red-50 text-red-700 border border-red-200'
+                  }`}>
+                    {fb.tipo === 'sucesso' ? <CheckCircle className="w-3.5 h-3.5" /> : <AlertTriangle className="w-3.5 h-3.5" />}
+                    <span>{fb.msg}</span>
+                  </div>
+                )}
+
+                {/* Botão de Salvar */}
+                <div className="flex justify-end gap-2 mt-1">
+                  <button
+                    onClick={() => handleSalvar(sala)}
+                    disabled={isSaving}
+                    className="bg-[#0F2A52] hover:bg-[#1D4E8C] disabled:opacity-50 text-white px-4 py-2 rounded-xl text-xs font-black uppercase tracking-wider flex items-center gap-1.5 transition-all shadow-xs cursor-pointer"
+                  >
+                    {isSaving ? (
+                      <span>Salvando...</span>
+                    ) : (
+                      <>
+                        <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Salvar Observação</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+
+        {salasFiltradas.length === 0 && (
+          <div className="text-center py-12 text-xs font-bold text-[#6B7280] bg-white rounded-3xl border border-[#CBD5E1]">
+            Nenhum ambiente encontrado para os filtros selecionados.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
 const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNavigate }) => {
   const context = useContext(DataContext) as ExtendedDataContextType;
   const { usuarioAtual, logout } = useAuth();
 
-  const [adminTab, setAdminTab] = useState<'aulas' | 'ambientes' | 'agendamentos'>('aulas');
+  const [adminTab, setAdminTab] = useState<'aulas' | 'ambientes' | 'agendamentos' | 'limpeza'>('aulas');
   const [editingAula, setEditingAula] = useState<Aula | null>(null);
   const [addingAula, setAddingAula] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -874,6 +1222,15 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
             <span>Painel Cliente</span>
           </button>
 
+          <button
+            onClick={() => onNavigate ? onNavigate('limpeza') : (window.location.pathname = '/limpeza')}
+            className="bg-white border border-[#CBD5E1] text-[#0F2A52] px-4 py-2.5 rounded-xl font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-[#F1F5F9] transition-all shadow-xs"
+            title="Abrir Painel Operacional de Limpeza"
+          >
+            <Broom className="w-4 h-4 text-[#1D4E8C]" />
+            <span>Painel Limpeza</span>
+          </button>
+
           <button 
             onClick={logout} 
             title="Encerrar Sessão" 
@@ -929,6 +1286,23 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
                 </span>
               )}
             </button>
+
+            <button
+              onClick={() => setAdminTab('limpeza')}
+              className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 relative ${
+                adminTab === 'limpeza'
+                  ? 'bg-white text-[#0F2A52] shadow-sm'
+                  : 'text-[#64748B] hover:text-[#0F2A52]'
+              }`}
+            >
+              <Broom className="w-4 h-4 text-[#1D4E8C]" />
+              <span>Limpeza & Observações</span>
+              {Object.keys(context.observacoesLimpeza || {}).filter(k => !!context.observacoesLimpeza?.[k]?.observacao).length > 0 && (
+                <span className="bg-[#F4901E] text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-xs">
+                  {Object.keys(context.observacoesLimpeza || {}).filter(k => !!context.observacoesLimpeza?.[k]?.observacao).length}
+                </span>
+              )}
+            </button>
           </div>
 
           {adminTab === 'aulas' && (
@@ -966,6 +1340,8 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
           <AmbientesManagementSection />
         ) : adminTab === 'agendamentos' ? (
           <AgendamentosAdminSection />
+        ) : adminTab === 'limpeza' ? (
+          <LimpezaManagementSection onNavigate={onNavigate} />
         ) : (
           /* Aba de Aulas & Cronograma */
           <div>

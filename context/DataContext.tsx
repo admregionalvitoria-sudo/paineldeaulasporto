@@ -1,6 +1,6 @@
 import React, { createContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { upload as vercelBlobUpload } from '@vercel/blob/client';
-import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType, AuditAction, PainelClienteConfig } from '../types';
+import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType, AuditAction, PainelClienteConfig, ObservacaoLimpeza } from '../types';
 import { db, storage, auth } from '../firebase';
 import { formatarUnidadeCurricular } from '../utils/curricularUnits';
 import { formatarNomeSala, CANONICAL_SALAS } from '../utils/roomFormatter';
@@ -200,6 +200,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [agendamentos, setAgendamentos] = useState<AgendamentoSala[]>([]);
   const [ambientesPersonalizados, setAmbientesPersonalizados] = useState<{ id: string; nome: string }[]>([]);
   const [painelClienteConfig, setPainelClienteConfig] = useState<PainelClienteConfig>(DEFAULT_PAINEL_CLIENTE_CONFIG);
+  const [observacoesLimpeza, setObservacoesLimpeza] = useState<Record<string, ObservacaoLimpeza>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncSource, setSyncSource] = useState<string | null>(null);
@@ -353,6 +354,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const alunosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'alunos');
     const agendamentosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos');
     const ambientesCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'ambientes');
+    const limpezaCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'limpeza');
     const metaDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'sync');
 
     const unsubMeta = onSnapshot(metaDocRef, (docSnap) => {
@@ -509,6 +511,27 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.warn("Aviso listener painelCliente:", err);
     });
 
+    const unsubLimpeza = onSnapshot(limpezaCollectionRef, (snapshot) => {
+      const obsMap: Record<string, ObservacaoLimpeza> = {};
+      snapshot.docs.forEach(docSnap => {
+        const d = docSnap.data();
+        const salaNome = d.sala || '';
+        if (salaNome) {
+          const norm = normalizarNomeAmbiente(salaNome);
+          obsMap[norm] = {
+            id: docSnap.id,
+            sala: salaNome,
+            observacao: d.observacao || '',
+            atualizadoEm: d.atualizadoEm,
+            atualizadoPor: d.atualizadoPor
+          };
+        }
+      });
+      setObservacoesLimpeza(obsMap);
+    }, (err) => {
+      console.warn("Aviso listener limpeza:", err);
+    });
+
     return () => {
       unsubMeta();
       unsubAmbientes();
@@ -517,6 +540,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       unsubAlunos();
       unsubAgendamentos();
       unsubPainelCliente();
+      unsubLimpeza();
       clearTimeout(reloadTimeoutRef.current);
     };
   }, []);
@@ -1206,14 +1230,79 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  const salvarObservacaoLimpeza = async (sala: string, observacao: string) => {
+    try {
+      const norm = normalizarNomeAmbiente(sala);
+      const docId = norm
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '');
+
+      if (!docId) return;
+
+      const docRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'limpeza', docId);
+      const user = auth.currentUser;
+      const userIdentificador = user?.displayName || user?.email || 'Gestor';
+
+      if (!observacao.trim()) {
+        await deleteDoc(docRef);
+        setObservacoesLimpeza(prev => {
+          const novo = { ...prev };
+          delete novo[norm];
+          return novo;
+        });
+        await registrarLog(
+          'REMOVER_OBSERVACAO_LIMPEZA',
+          'limpeza',
+          sala,
+          `Observação removida do ambiente: ${sala}`
+        );
+        return;
+      }
+
+      const payload: ObservacaoLimpeza = {
+        sala: formatarNomeSala(sala) || sala,
+        observacao: observacao.trim(),
+        atualizadoEm: serverTimestamp(),
+        atualizadoPor: userIdentificador
+      };
+
+      await setDoc(docRef, payload, { merge: true });
+      setObservacoesLimpeza(prev => ({
+        ...prev,
+        [norm]: {
+          ...payload,
+          id: docId,
+          atualizadoEm: new Date()
+        }
+      }));
+
+      await registrarLog(
+        'ATUALIZAR_OBSERVACAO_LIMPEZA',
+        'limpeza',
+        sala,
+        `Observação do ambiente ${sala}: "${observacao.trim()}"`
+      );
+    } catch (e: any) {
+      console.error("Erro ao salvar observação de limpeza:", e);
+      throw e;
+    }
+  };
+
+  const removerObservacaoLimpeza = async (sala: string) => {
+    await salvarObservacaoLimpeza(sala, '');
+  };
+
   return (
     <DataContext.Provider value={{ 
-      aulas, anuncios, alunos, agendamentos, salasCadastradas, painelClienteConfig, loading, error, isOffline,
+      aulas, anuncios, alunos, agendamentos, salasCadastradas, painelClienteConfig, observacoesLimpeza, loading, error, isOffline,
       addAula, updateAulasFromCSV, updateAula, deleteAula, 
       clearAulas, addAnuncio, deleteAnuncio, replaceAnuncio, reorderAnuncios, clearAllAnuncios,
       uploadMediaFile, uploadCSV, syncSource, updatePainelClienteConfig,
       solicitarAgendamento, aprovarAgendamento, rejeitarAgendamento, excluirAgendamento,
-      adicionarAmbiente, excluirAmbiente, registrarLog
+      adicionarAmbiente, excluirAmbiente, salvarObservacaoLimpeza, removerObservacaoLimpeza, registrarLog
     }}>
       {children}
     </DataContext.Provider>
