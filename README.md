@@ -23,7 +23,7 @@ View your app in AI Studio: https://ai.studio/apps/2689532b-33ff-41af-8605-6fb2e
 ## Telas Principais da Aplicação
 
 - `/` (ou `#dashboard`): Painel Principal de Aulas com alternância automática e manual de turnos.
-- `/limpeza`: Painel Operacional de Limpeza (visão unificada do dia em tempo real, status operacional e observações).
+- `/limpeza`: Painel Operacional de Limpeza (priorização de salas usadas no dia anterior de uso, salas de hoje e observações da gestão).
 - `/admin`: Painel Administrativo de Gestão de Horários, Ambientes, Agendamentos e Limpeza.
 - `/painelcliente`: Painel institucional para recepção e clientes.
 - `/midia`: Gestão de mídias e avisos rotativos da TV.
