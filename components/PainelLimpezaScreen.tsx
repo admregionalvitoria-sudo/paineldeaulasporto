@@ -4,7 +4,6 @@ import { DataContext, normalizarNomeAmbiente } from '../context/DataContext';
 import useCurrentTime from '../hooks/useCurrentTime';
 import { Aula } from '../types';
 import { formatarNomeSala } from '../utils/roomFormatter';
-import { formatarUnidadeCurricular } from '../utils/curricularUnits';
 import {
   Broom,
   Clock,
@@ -14,8 +13,7 @@ import {
   Maximize,
   Minimize,
   ArrowLeft,
-  Tv,
-  Info
+  Tv
 } from 'lucide-react';
 
 interface PainelLimpezaScreenProps {
@@ -32,19 +30,37 @@ interface RoomClassInfo {
   turno: string;
 }
 
-interface RoomDayStatus {
+interface RoomCleanItem {
   sala: string;
-  nomeFormatado: string;
-  classes: RoomClassInfo[];
-  currentClass: RoomClassInfo | null;
-  nextClass: RoomClassInfo | null;
-  status: 'em_aula' | 'livre' | 'concluido' | 'sem_aula';
+  nomeCurto: string;
+  norm: string;
+  classesOntem: RoomClassInfo[];
+  classesHoje: RoomClassInfo[];
+  currentClassHoje: RoomClassInfo | null;
+  nextClassHoje: RoomClassInfo | null;
+  statusHoje: 'em_aula' | 'livre' | 'concluido' | 'sem_aula';
   observacao?: {
     observacao: string;
     atualizadoEm?: any;
     atualizadoPor?: string;
   };
 }
+
+export const getNomeCurtoSala = (salaStr: string | undefined): string => {
+  if (!salaStr) return '';
+  const formatada = formatarNomeSala(salaStr) || salaStr;
+  if (formatada.includes(' — ')) {
+    return formatada.split(' — ')[0].trim();
+  }
+  return formatada.trim();
+};
+
+const dateStrToNumber = (dStr: string): number => {
+  if (!dStr) return 0;
+  const parts = dStr.split('/');
+  if (parts.length !== 3) return 0;
+  return parseInt(parts[2], 10) * 10000 + parseInt(parts[1], 10) * 100 + parseInt(parts[0], 10);
+};
 
 const parseTimeToMinutes = (timeStr: string | undefined, defaultTurno?: string): { inicio: string; fim: string; start: number; end: number } => {
   let startMinutes = 0;
@@ -93,7 +109,13 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
   const context = useContext(DataContext);
   const { formattedDate, formattedTime } = useCurrentTime();
 
-  const [filterStatus, setFilterStatus] = useState<'todos' | 'livre' | 'em_aula' | 'com_observacao' | 'sem_aula'>('todos');
+  // Modo Principal: 'dia_anterior' (padrão solicitado) ou 'hoje'
+  const [viewMode, setViewMode] = useState<'dia_anterior' | 'hoje'>('dia_anterior');
+
+  // Sub-filtros
+  const [filterOntem, setFilterOntem] = useState<'todos' | 'com_aula_hoje' | 'sem_aula_hoje' | 'com_observacao'>('todos');
+  const [filterHoje, setFilterHoje] = useState<'todos' | 'livre' | 'em_aula' | 'com_observacao' | 'sem_aula'>('todos');
+
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [autoScroll, setAutoScroll] = useState(false);
 
@@ -128,33 +150,75 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
     return () => clearInterval(interval);
   }, [autoScroll]);
 
-  // Data de hoje em DD/MM/YYYY
-  const todayStr = useMemo(() => {
-    const now = new Date();
-    const day = String(now.getDate()).padStart(2, '0');
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const year = now.getFullYear();
-    return `${day}/${month}/${year}`;
-  }, []);
-
   // Minutos atuais do dia
   const currentMinutes = useMemo(() => {
     const now = new Date();
     return now.getHours() * 60 + now.getMinutes();
   }, [formattedTime]);
 
-  // Processar todas as salas com aulas no dia de hoje
-  const roomsData = useMemo<RoomDayStatus[]>(() => {
-    if (!context) return [];
+  // Cálculo da data de hoje e do dia anterior de uso com aulas
+  const { todayStr, previousDayStr, previousDayDisplay } = useMemo(() => {
+    const now = new Date();
+    const day = String(now.getDate()).padStart(2, '0');
+    const month = String(now.getMonth() + 1).padStart(2, '0');
+    const year = now.getFullYear();
+    const today = `${day}/${month}/${year}`;
+    const todayNum = dateStrToNumber(today);
 
-    const todayAulas = context.aulas.filter(a => (a.data || '').trim() === todayStr);
-    const roomMap = new Map<string, { nomeExibicao: string; classes: RoomClassInfo[] }>();
+    // Buscar todas as datas com aulas registradas no banco
+    const allDates: string[] = Array.from(
+      new Set((context?.aulas || []).map(a => (a.data || '').trim()).filter(Boolean))
+    ) as string[];
 
-    todayAulas.forEach(aula => {
+    // Filtrar datas estritamente anteriores a hoje
+    const previousDates: string[] = allDates
+      .filter((d: string) => dateStrToNumber(d) < todayNum)
+      .sort((a: string, b: string) => dateStrToNumber(b) - dateStrToNumber(a));
+
+    let prev = '';
+    if (previousDates.length > 0) {
+      prev = previousDates[0];
+    } else {
+      // Fallback: se hoje for segunda-feira (1), dia anterior útil com aulas é sexta (-3 dias)
+      const yest = new Date(now);
+      const dayOfWeek = now.getDay();
+      if (dayOfWeek === 1) {
+        yest.setDate(yest.getDate() - 3);
+      } else {
+        yest.setDate(yest.getDate() - 1);
+      }
+      const yDay = String(yest.getDate()).padStart(2, '0');
+      const yMonth = String(yest.getMonth() + 1).padStart(2, '0');
+      const yYear = yest.getFullYear();
+      prev = `${yDay}/${yMonth}/${yYear}`;
+    }
+
+    return {
+      todayStr: today,
+      previousDayStr: prev,
+      previousDayDisplay: prev
+    };
+  }, [context]);
+
+  // Processar datasets: Salas Usadas Ontem vs Salas de Hoje
+  const { roomsDiaAnterior, roomsHoje } = useMemo(() => {
+    if (!context) return { roomsDiaAnterior: [], roomsHoje: [] };
+
+    const aulasOntem = context.aulas.filter(a => (a.data || '').trim() === previousDayStr);
+    const aulasHoje = context.aulas.filter(a => (a.data || '').trim() === todayStr);
+
+    const allRoomsMap = new Map<string, {
+      sala: string;
+      nomeCurto: string;
+      classesOntem: RoomClassInfo[];
+      classesHoje: RoomClassInfo[];
+    }>();
+
+    // Processar aulas de ontem
+    aulasOntem.forEach(aula => {
       if (!aula.sala || !aula.sala.trim()) return;
       const norm = normalizarNomeAmbiente(aula.sala);
       const timeParsed = parseTimeToMinutes(aula.inicio, aula.turno);
-      
       const classInfo: RoomClassInfo = {
         aula,
         inicio: aula.inicio && aula.inicio.includes(':') ? aula.inicio : timeParsed.inicio,
@@ -164,112 +228,185 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
         turno: aula.turno || 'Matutino'
       };
 
-      if (!roomMap.has(norm)) {
-        roomMap.set(norm, {
-          nomeExibicao: formatarNomeSala(aula.sala) || aula.sala,
-          classes: [classInfo]
+      if (!allRoomsMap.has(norm)) {
+        allRoomsMap.set(norm, {
+          sala: formatarNomeSala(aula.sala) || aula.sala,
+          nomeCurto: getNomeCurtoSala(aula.sala),
+          classesOntem: [classInfo],
+          classesHoje: []
         });
       } else {
-        roomMap.get(norm)!.classes.push(classInfo);
+        allRoomsMap.get(norm)!.classesOntem.push(classInfo);
       }
     });
 
-    const list: RoomDayStatus[] = [];
+    // Processar aulas de hoje
+    aulasHoje.forEach(aula => {
+      if (!aula.sala || !aula.sala.trim()) return;
+      const norm = normalizarNomeAmbiente(aula.sala);
+      const timeParsed = parseTimeToMinutes(aula.inicio, aula.turno);
+      const classInfo: RoomClassInfo = {
+        aula,
+        inicio: aula.inicio && aula.inicio.includes(':') ? aula.inicio : timeParsed.inicio,
+        fim: aula.fim && aula.fim.includes(':') ? aula.fim : timeParsed.fim,
+        startMinutes: timeParsed.start,
+        endMinutes: timeParsed.end,
+        turno: aula.turno || 'Matutino'
+      };
 
-    roomMap.forEach((roomInfo, norm) => {
-      const sortedClasses = [...roomInfo.classes].sort((a, b) => a.startMinutes - b.startMinutes);
-
-      const currentClass = sortedClasses.find(
-        c => currentMinutes >= c.startMinutes && currentMinutes < c.endMinutes
-      ) || null;
-
-      const nextClass = sortedClasses.find(c => c.startMinutes > currentMinutes) || null;
-
-      let status: 'em_aula' | 'livre' | 'concluido' | 'sem_aula' = 'livre';
-      if (currentClass) {
-        status = 'em_aula';
-      } else if (!nextClass && sortedClasses.length > 0 && currentMinutes >= sortedClasses[sortedClasses.length - 1].endMinutes) {
-        status = 'concluido';
+      if (!allRoomsMap.has(norm)) {
+        allRoomsMap.set(norm, {
+          sala: formatarNomeSala(aula.sala) || aula.sala,
+          nomeCurto: getNomeCurtoSala(aula.sala),
+          classesOntem: [],
+          classesHoje: [classInfo]
+        });
       } else {
-        status = 'livre';
+        allRoomsMap.get(norm)!.classesHoje.push(classInfo);
       }
-
-      const observacao = context.observacoesLimpeza?.[norm];
-
-      list.push({
-        sala: roomInfo.nomeExibicao,
-        nomeFormatado: roomInfo.nomeExibicao,
-        classes: sortedClasses,
-        currentClass,
-        nextClass,
-        status,
-        observacao
-      });
     });
 
+    // Se houver salas cadastradas
     if (context.salasCadastradas) {
       context.salasCadastradas.forEach(salaCadastrada => {
         const norm = normalizarNomeAmbiente(salaCadastrada);
-        if (!roomMap.has(norm)) {
-          const observacao = context.observacoesLimpeza?.[norm];
-          list.push({
-            sala: salaCadastrada,
-            nomeFormatado: formatarNomeSala(salaCadastrada) || salaCadastrada,
-            classes: [],
-            currentClass: null,
-            nextClass: null,
-            status: 'sem_aula',
-            observacao
+        if (!allRoomsMap.has(norm)) {
+          allRoomsMap.set(norm, {
+            sala: formatarNomeSala(salaCadastrada) || salaCadastrada,
+            nomeCurto: getNomeCurtoSala(salaCadastrada),
+            classesOntem: [],
+            classesHoje: []
           });
         }
       });
     }
 
-    return list.sort((a, b) => {
+    const listDiaAnterior: RoomCleanItem[] = [];
+    const listHoje: RoomCleanItem[] = [];
+
+    allRoomsMap.forEach((roomData, norm) => {
+      const sortedOntem = [...roomData.classesOntem].sort((a, b) => a.startMinutes - b.startMinutes);
+      const sortedHoje = [...roomData.classesHoje].sort((a, b) => a.startMinutes - b.startMinutes);
+
+      const currentClassHoje = sortedHoje.find(
+        c => currentMinutes >= c.startMinutes && currentMinutes < c.endMinutes
+      ) || null;
+
+      const nextClassHoje = sortedHoje.find(c => c.startMinutes > currentMinutes) || null;
+
+      let statusHoje: 'em_aula' | 'livre' | 'concluido' | 'sem_aula' = 'livre';
+      if (currentClassHoje) {
+        statusHoje = 'em_aula';
+      } else if (!nextClassHoje && sortedHoje.length > 0 && currentMinutes >= sortedHoje[sortedHoje.length - 1].endMinutes) {
+        statusHoje = 'concluido';
+      } else if (sortedHoje.length === 0) {
+        statusHoje = 'sem_aula';
+      } else {
+        statusHoje = 'livre';
+      }
+
+      const observacao = context.observacoesLimpeza?.[norm];
+
+      const item: RoomCleanItem = {
+        sala: roomData.sala,
+        nomeCurto: roomData.nomeCurto,
+        norm,
+        classesOntem: sortedOntem,
+        classesHoje: sortedHoje,
+        currentClassHoje,
+        nextClassHoje,
+        statusHoje,
+        observacao
+      };
+
+      // Salas do dia anterior: apenas salas que FORAM USADAS ontem (ou têm observação da gestão)
+      if (sortedOntem.length > 0 || observacao?.observacao) {
+        listDiaAnterior.push(item);
+      }
+
+      // Salas de hoje: salas com aulas hoje (ou têm observação da gestão)
+      if (sortedHoje.length > 0 || observacao?.observacao) {
+        listHoje.push(item);
+      }
+    });
+
+    // Ordenação Dia Anterior:
+    // 1º Com aviso de gestão
+    // 2º Salas que têm aula hoje (urgência de limpeza antes da aula de hoje!)
+    // 3º Ordem alfabética do nome da sala
+    listDiaAnterior.sort((a, b) => {
       const aHasObs = !!a.observacao?.observacao;
       const bHasObs = !!b.observacao?.observacao;
       if (aHasObs && !bHasObs) return -1;
       if (!aHasObs && bHasObs) return 1;
 
-      const aHasClass = a.classes.length > 0;
-      const bHasClass = b.classes.length > 0;
-      if (aHasClass && !bHasClass) return -1;
-      if (!aHasClass && bHasClass) return 1;
+      const aTemAulaHoje = a.classesHoje.length > 0;
+      const bTemAulaHoje = b.classesHoje.length > 0;
+      if (aTemAulaHoje && !bTemAulaHoje) return -1;
+      if (!aTemAulaHoje && bTemAulaHoje) return 1;
 
-      return a.nomeFormatado.localeCompare(b.nomeFormatado, 'pt-BR', { numeric: true });
+      return a.nomeCurto.localeCompare(b.nomeCurto, 'pt-BR', { numeric: true });
     });
-  }, [context, todayStr, currentMinutes]);
 
-  // Contadores para métricas
-  const metrics = useMemo(() => {
-    const comAulaHoje = roomsData.filter(r => r.classes.length > 0);
-    const livresAgora = comAulaHoje.filter(r => r.status === 'livre');
-    const emAulaAgora = comAulaHoje.filter(r => r.status === 'em_aula');
-    const concluidasHoje = comAulaHoje.filter(r => r.status === 'concluido');
-    const comObservacao = roomsData.filter(r => !!r.observacao?.observacao);
+    // Ordenação Hoje:
+    // 1º Com aviso
+    // 2º Em aula
+    // 3º Livre
+    // 4º Nome
+    listHoje.sort((a, b) => {
+      const aHasObs = !!a.observacao?.observacao;
+      const bHasObs = !!b.observacao?.observacao;
+      if (aHasObs && !bHasObs) return -1;
+      if (!aHasObs && bHasObs) return 1;
 
-    return {
-      totalComAula: comAulaHoje.length,
-      livres: livresAgora.length,
-      emAula: emAulaAgora.length,
-      concluidas: concluidasHoje.length,
-      comObs: comObservacao.length
-    };
-  }, [roomsData]);
+      if (a.statusHoje === 'em_aula' && b.statusHoje !== 'em_aula') return -1;
+      if (a.statusHoje !== 'em_aula' && b.statusHoje === 'em_aula') return 1;
 
-  // Filtragem
-  const filteredRooms = useMemo(() => {
-    return roomsData.filter(room => {
-      if (filterStatus === 'livre' && room.status !== 'livre') return false;
-      if (filterStatus === 'em_aula' && room.status !== 'em_aula') return false;
-      if (filterStatus === 'com_observacao' && !room.observacao?.observacao) return false;
-      if (filterStatus === 'sem_aula' && room.status !== 'sem_aula') return false;
-      if (filterStatus === 'todos' && room.status === 'sem_aula' && !room.observacao?.observacao) {
-        return false;
-      }
-      return true;
+      return a.nomeCurto.localeCompare(b.nomeCurto, 'pt-BR', { numeric: true });
     });
-  }, [roomsData, filterStatus]);
+
+    return { roomsDiaAnterior: listDiaAnterior, roomsHoje: listHoje };
+  }, [context, previousDayStr, todayStr, currentMinutes]);
+
+  // Métricas do Dia Anterior
+  const metricsOntem = useMemo(() => {
+    const total = roomsDiaAnterior.length;
+    const comAulaHoje = roomsDiaAnterior.filter(r => r.classesHoje.length > 0).length;
+    const semAulaHoje = roomsDiaAnterior.filter(r => r.classesHoje.length === 0).length;
+    const comObs = roomsDiaAnterior.filter(r => !!r.observacao?.observacao).length;
+    return { total, comAulaHoje, semAulaHoje, comObs };
+  }, [roomsDiaAnterior]);
+
+  // Métricas de Hoje
+  const metricsHoje = useMemo(() => {
+    const comAula = roomsHoje.filter(r => r.classesHoje.length > 0);
+    const livres = comAula.filter(r => r.statusHoje === 'livre').length;
+    const emAula = comAula.filter(r => r.statusHoje === 'em_aula').length;
+    const concluidas = comAula.filter(r => r.statusHoje === 'concluido').length;
+    const comObs = roomsHoje.filter(r => !!r.observacao?.observacao).length;
+    const semAula = roomsHoje.filter(r => r.statusHoje === 'sem_aula').length;
+    return { totalComAula: comAula.length, livres, emAula, concluidas, comObs, semAula };
+  }, [roomsHoje]);
+
+  // Filtragem da Lista Ativa
+  const displayRooms = useMemo(() => {
+    if (viewMode === 'dia_anterior') {
+      return roomsDiaAnterior.filter(r => {
+        if (filterOntem === 'com_aula_hoje' && r.classesHoje.length === 0) return false;
+        if (filterOntem === 'sem_aula_hoje' && r.classesHoje.length > 0) return false;
+        if (filterOntem === 'com_observacao' && !r.observacao?.observacao) return false;
+        return true;
+      });
+    } else {
+      return roomsHoje.filter(r => {
+        if (filterHoje === 'livre' && r.statusHoje !== 'livre') return false;
+        if (filterHoje === 'em_aula' && r.statusHoje !== 'em_aula') return false;
+        if (filterHoje === 'com_observacao' && !r.observacao?.observacao) return false;
+        if (filterHoje === 'sem_aula' && r.statusHoje !== 'sem_aula') return false;
+        return true;
+      });
+    }
+  }, [viewMode, roomsDiaAnterior, roomsHoje, filterOntem, filterHoje]);
 
   return (
     <div className="min-h-screen bg-[#EDF1F6] text-[#0F2A52] flex flex-col font-sans relative selection:bg-[#F4901E] selection:text-white pb-12">
@@ -356,115 +493,216 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
         </div>
       </header>
 
-      {/* Barra de Filtros Rápidos com Rolagem Suave */}
-      <section className="z-10 px-3 py-2 sm:px-6 sm:py-2.5 max-w-[2400px] mx-auto w-full">
+      {/* Seletor Principal de Categoria & Filtros Rápidos */}
+      <section className="z-10 px-3 py-2 sm:px-6 sm:py-2.5 max-w-[2400px] mx-auto w-full flex flex-col gap-2">
+        {/* Abas Principais: Dia Anterior (Principal) vs Salas de Hoje */}
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setViewMode('dia_anterior')}
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer shadow-xs ${
+              viewMode === 'dia_anterior'
+                ? 'bg-[#0F2A52] text-white ring-2 ring-[#0F2A52]/30 shadow-sm'
+                : 'bg-white text-[#0F2A52] border border-[#CBD5E1] hover:bg-[#F1F5F9]'
+            }`}
+          >
+            <Broom className="w-4 h-4 text-[#F4901E]" />
+            <span>Usadas no Dia Anterior ({previousDayDisplay})</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+              viewMode === 'dia_anterior' ? 'bg-[#F4901E] text-white' : 'bg-slate-100 text-[#0F2A52]'
+            }`}>
+              {metricsOntem.total}
+            </span>
+          </button>
+
+          <button
+            onClick={() => setViewMode('hoje')}
+            className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer shadow-xs ${
+              viewMode === 'hoje'
+                ? 'bg-[#0F2A52] text-white ring-2 ring-[#0F2A52]/30 shadow-sm'
+                : 'bg-white text-[#0F2A52] border border-[#CBD5E1] hover:bg-[#F1F5F9]'
+            }`}
+          >
+            <DoorOpen className="w-4 h-4 text-[#1D4E8C]" />
+            <span>Salas de Hoje ({todayStr})</span>
+            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+              viewMode === 'hoje' ? 'bg-[#1D4E8C] text-white' : 'bg-slate-100 text-[#0F2A52]'
+            }`}>
+              {metricsHoje.totalComAula}
+            </span>
+          </button>
+        </div>
+
+        {/* Sub-filtros dinâmicos de acordo com a aba selecionada */}
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 -mx-3 px-3 sm:mx-0 sm:px-0 text-[11px] font-bold no-scrollbar flex-nowrap">
-          <button
-            onClick={() => setFilterStatus('todos')}
-            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-              filterStatus === 'todos'
-                ? 'bg-[#0F2A52] text-white border-[#0F2A52]'
-                : 'bg-white text-[#0F2A52] border-[#CBD5E1] hover:bg-[#F1F5F9]'
-            }`}
-          >
-            <DoorOpen className="w-3.5 h-3.5 text-[#F4901E]" />
-            <span>Todas do Dia ({metrics.totalComAula})</span>
-          </button>
+          {viewMode === 'dia_anterior' ? (
+            <>
+              <button
+                onClick={() => setFilterOntem('todos')}
+                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+                  filterOntem === 'todos'
+                    ? 'bg-[#0F2A52] text-white border-[#0F2A52]'
+                    : 'bg-white text-[#0F2A52] border-[#CBD5E1] hover:bg-[#F1F5F9]'
+                }`}
+              >
+                <DoorOpen className="w-3.5 h-3.5 text-[#F4901E]" />
+                <span>Todas Usadas Ontem ({metricsOntem.total})</span>
+              </button>
 
-          <button
-            onClick={() => setFilterStatus(filterStatus === 'livre' ? 'todos' : 'livre')}
-            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-              filterStatus === 'livre'
-                ? 'bg-emerald-600 text-white border-emerald-700 font-black'
-                : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
-            }`}
-          >
-            <span className="w-2 h-2 rounded-full bg-emerald-500" />
-            <span>Livres Agora ({metrics.livres})</span>
-          </button>
+              <button
+                onClick={() => setFilterOntem(filterOntem === 'com_aula_hoje' ? 'todos' : 'com_aula_hoje')}
+                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+                  filterOntem === 'com_aula_hoje'
+                    ? 'bg-[#1D4E8C] text-white border-[#1D4E8C] font-black'
+                    : 'bg-blue-50 text-[#1D4E8C] border-blue-200 hover:bg-blue-100'
+                }`}
+              >
+                <Clock className="w-3.5 h-3.5" />
+                <span>Com Aula Hoje ({metricsOntem.comAulaHoje})</span>
+              </button>
 
-          <button
-            onClick={() => setFilterStatus(filterStatus === 'em_aula' ? 'todos' : 'em_aula')}
-            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-              filterStatus === 'em_aula'
-                ? 'bg-red-600 text-white border-red-700 font-black'
-                : 'bg-red-50 text-red-800 border-red-200 hover:bg-red-100'
-            }`}
-          >
-            <span className="w-2 h-2 rounded-full bg-red-500" />
-            <span>Em Aula ({metrics.emAula})</span>
-          </button>
+              <button
+                onClick={() => setFilterOntem(filterOntem === 'sem_aula_hoje' ? 'todos' : 'sem_aula_hoje')}
+                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+                  filterOntem === 'sem_aula_hoje'
+                    ? 'bg-emerald-600 text-white border-emerald-700 font-black'
+                    : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                }`}
+              >
+                <CheckCircle2 className="w-3.5 h-3.5" />
+                <span>Sem Aula Hoje ({metricsOntem.semAulaHoje})</span>
+              </button>
 
-          {metrics.comObs > 0 && (
-            <button
-              onClick={() => setFilterStatus(filterStatus === 'com_observacao' ? 'todos' : 'com_observacao')}
-              className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-                filterStatus === 'com_observacao'
-                  ? 'bg-[#F4901E] text-white border-[#F4901E] font-black'
-                  : 'bg-amber-50 text-[#F4901E] border-amber-300 hover:bg-amber-100'
-              }`}
-            >
-              <AlertTriangle className="w-3.5 h-3.5" />
-              <span>Avisos ({metrics.comObs})</span>
-            </button>
+              {metricsOntem.comObs > 0 && (
+                <button
+                  onClick={() => setFilterOntem(filterOntem === 'com_observacao' ? 'todos' : 'com_observacao')}
+                  className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+                    filterOntem === 'com_observacao'
+                      ? 'bg-[#F4901E] text-white border-[#F4901E] font-black'
+                      : 'bg-amber-50 text-[#F4901E] border-amber-300 hover:bg-amber-100'
+                  }`}
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>Avisos ({metricsOntem.comObs})</span>
+                </button>
+              )}
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => setFilterHoje('todos')}
+                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+                  filterHoje === 'todos'
+                    ? 'bg-[#0F2A52] text-white border-[#0F2A52]'
+                    : 'bg-white text-[#0F2A52] border-[#CBD5E1] hover:bg-[#F1F5F9]'
+                }`}
+              >
+                <DoorOpen className="w-3.5 h-3.5 text-[#F4901E]" />
+                <span>Todas do Dia ({metricsHoje.totalComAula})</span>
+              </button>
+
+              <button
+                onClick={() => setFilterHoje(filterHoje === 'livre' ? 'todos' : 'livre')}
+                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+                  filterHoje === 'livre'
+                    ? 'bg-emerald-600 text-white border-emerald-700 font-black'
+                    : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                <span>Livres Agora ({metricsHoje.livres})</span>
+              </button>
+
+              <button
+                onClick={() => setFilterHoje(filterHoje === 'em_aula' ? 'todos' : 'em_aula')}
+                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+                  filterHoje === 'em_aula'
+                    ? 'bg-red-600 text-white border-red-700 font-black'
+                    : 'bg-red-50 text-red-800 border-red-200 hover:bg-red-100'
+                }`}
+              >
+                <span className="w-2 h-2 rounded-full bg-red-500" />
+                <span>Em Aula ({metricsHoje.emAula})</span>
+              </button>
+
+              {metricsHoje.comObs > 0 && (
+                <button
+                  onClick={() => setFilterHoje(filterHoje === 'com_observacao' ? 'todos' : 'com_observacao')}
+                  className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+                    filterHoje === 'com_observacao'
+                      ? 'bg-[#F4901E] text-white border-[#F4901E] font-black'
+                      : 'bg-amber-50 text-[#F4901E] border-amber-300 hover:bg-amber-100'
+                  }`}
+                >
+                  <AlertTriangle className="w-3.5 h-3.5" />
+                  <span>Avisos ({metricsHoje.comObs})</span>
+                </button>
+              )}
+
+              <button
+                onClick={() => setFilterHoje(filterHoje === 'sem_aula' ? 'todos' : 'sem_aula')}
+                className={`shrink-0 px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer ${
+                  filterHoje === 'sem_aula'
+                    ? 'bg-slate-700 text-white border-slate-700'
+                    : 'bg-white text-slate-500 border-[#CBD5E1] hover:bg-[#F1F5F9]'
+                }`}
+              >
+                Sem Aula
+              </button>
+            </>
           )}
-
-          <button
-            onClick={() => setFilterStatus(filterStatus === 'sem_aula' ? 'todos' : 'sem_aula')}
-            className={`shrink-0 px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer ${
-              filterStatus === 'sem_aula'
-                ? 'bg-slate-700 text-white border-slate-700'
-                : 'bg-white text-slate-500 border-[#CBD5E1] hover:bg-[#F1F5F9]'
-            }`}
-          >
-            Sem Aula
-          </button>
         </div>
       </section>
 
-      {/* Lista de Ambientes - Visualização em Lista com Nomes das Salas em Destaque */}
+      {/* Lista de Ambientes - Visualização Ultra-Compacta */}
       <main className="flex-1 px-3 sm:px-6 max-w-[2400px] mx-auto w-full z-10">
-        {filteredRooms.length === 0 ? (
+        {displayRooms.length === 0 ? (
           <div className="bg-white rounded-2xl border border-[#CBD5E1] p-8 text-center flex flex-col items-center justify-center my-4 shadow-xs">
             <DoorOpen className="w-10 h-10 text-[#F4901E] mb-2" />
             <h3 className="text-base font-black uppercase text-[#0F2A52]">Nenhum ambiente encontrado</h3>
-            <p className="text-xs text-[#6B7280] max-w-sm mt-0.5">Tente alterar os filtros ou o termo de busca.</p>
+            <p className="text-xs text-[#6B7280] max-w-sm mt-0.5">
+              {viewMode === 'dia_anterior'
+                ? `Não foram encontradas salas com uso registrado no dia anterior (${previousDayDisplay}).`
+                : 'Não foram encontradas salas para os filtros selecionados hoje.'}
+            </p>
             <button
-              onClick={() => setFilterStatus('todos')}
+              onClick={() => {
+                setFilterOntem('todos');
+                setFilterHoje('todos');
+              }}
               className="mt-3 px-4 py-2 bg-[#0F2A52] text-white rounded-xl text-xs font-bold uppercase hover:bg-[#1D4E8C] cursor-pointer"
             >
-              Ver Todas as Salas
+              Ver Todas
             </button>
           </div>
         ) : (
           <div className="flex flex-col gap-1.5 sm:gap-2">
             {/* Cabeçalho compacto para telas grandes */}
             <div className="hidden lg:flex items-center justify-between px-4 py-1.5 text-[10px] font-black uppercase tracking-wider text-[#6B7280] bg-white/70 backdrop-blur-xs rounded-lg border border-[#CBD5E1] shadow-2xs">
-              <div className="w-[320px] xl:w-[380px] flex items-center gap-1.5">
+              <div className="w-[280px] xl:w-[320px] flex items-center gap-1.5">
                 <DoorOpen className="w-3.5 h-3.5 text-[#F4901E]" />
                 <span>Ambiente / Sala</span>
               </div>
-              <div className="w-[320px] xl:w-[360px] flex items-center gap-1.5">
+              <div className="w-[340px] xl:w-[400px] flex items-center gap-1.5">
                 <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Status & Higienização</span>
+                <span>Situação de Limpeza & Higienização</span>
               </div>
               <div className="flex-1 flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-[#1D4E8C]" />
-                <span>Cronograma de Aulas do Dia</span>
+                <span>
+                  {viewMode === 'dia_anterior'
+                    ? `Horários de Uso no Dia Anterior (${previousDayDisplay})`
+                    : 'Horários de Uso Hoje'}
+                </span>
               </div>
             </div>
 
             <AnimatePresence mode="popLayout">
-              {filteredRooms.map((room, idx) => {
+              {displayRooms.map((room, idx) => {
                 const hasObs = !!room.observacao?.observacao;
-                const isEmAula = room.status === 'em_aula';
-                const isLivre = room.status === 'livre';
-                const isConcluido = room.status === 'concluido';
-
-                // Separação inteligente: Nome Principal (ex: Laboratório 01) e Subtítulo (Espaço...)
-                const parts = (room.nomeFormatado || room.sala).split(' — ');
-                const mainName = parts[0] || room.nomeFormatado;
-                const subName = parts.length > 1 ? parts.slice(1).join(' • ') : '';
+                const temAulaHoje = room.classesHoje.length > 0;
+                const isEmAulaHoje = room.statusHoje === 'em_aula';
+                const isLivreHoje = room.statusHoje === 'livre';
+                const isConcluidoHoje = room.statusHoje === 'concluido';
 
                 return (
                   <motion.div
@@ -476,9 +714,13 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
                     className={`rounded-xl bg-white border transition-all shadow-2xs hover:shadow-xs relative overflow-hidden flex flex-col justify-center px-2.5 py-2 sm:px-4 sm:py-2.5 ${
                       hasObs
                         ? 'border-[#F4901E] ring-1 ring-[#F4901E]/35 bg-amber-50/10'
-                        : isEmAula
+                        : viewMode === 'dia_anterior'
+                        ? temAulaHoje
+                          ? 'border-blue-300 bg-blue-50/10'
+                          : 'border-[#CBD5E1]'
+                        : isEmAulaHoje
                         ? 'border-red-200'
-                        : isLivre
+                        : isLivreHoje
                         ? 'border-emerald-200'
                         : 'border-[#CBD5E1]'
                     }`}
@@ -488,11 +730,15 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
                       className={`absolute top-0 bottom-0 left-0 w-1.5 sm:w-2 ${
                         hasObs
                           ? 'bg-[#F4901E]'
-                          : isEmAula
+                          : viewMode === 'dia_anterior'
+                          ? temAulaHoje
+                            ? 'bg-[#1D4E8C]'
+                            : 'bg-emerald-500'
+                          : isEmAulaHoje
                           ? 'bg-red-500'
-                          : isLivre
+                          : isLivreHoje
                           ? 'bg-emerald-500'
-                          : isConcluido
+                          : isConcluidoHoje
                           ? 'bg-[#1D4E8C]'
                           : 'bg-slate-300'
                       }`}
@@ -502,150 +748,207 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
                       {/* LINHA 1 (No Desktop divide em 3 colunas; No Mobile divide entre Sala e Status) */}
                       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-1.5 lg:gap-3">
                         
-                        {/* COLUNA 1: NOME DA SALA EM SUPER DESTAQUE */}
-                        <div className="flex items-center justify-between lg:justify-start gap-2 min-w-0 lg:w-[320px] xl:w-[380px] shrink-0">
+                        {/* COLUNA 1: NOME DA SALA EM DESTAQUE (SEM NOMES LONGOS / SUBNOMES) */}
+                        <div className="flex items-center justify-between lg:justify-start gap-2 min-w-0 lg:w-[280px] xl:w-[320px] shrink-0">
                           <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                            <span className="text-xs sm:text-sm font-black uppercase text-[#0F2A52] tracking-tight bg-[#EEF2F6] border border-[#CBD5E1] px-2 py-0.5 rounded-md shrink-0 shadow-2xs">
-                              {mainName}
+                            <span
+                              title={room.sala}
+                              className="text-xs sm:text-sm font-black uppercase text-[#0F2A52] tracking-tight bg-[#EEF2F6] border border-[#CBD5E1] px-2 py-0.5 rounded-md shrink-0 shadow-2xs"
+                            >
+                              {room.nomeCurto}
                             </span>
-                            {subName && (
-                              <span className="text-[10px] sm:text-xs text-[#64748B] font-semibold truncate" title={subName}>
-                                {subName}
-                              </span>
-                            )}
                           </div>
 
                           {/* Badge de Status no Mobile (alinhado à direita na Linha 1) */}
                           <div className="shrink-0 lg:hidden">
-                            {isEmAula && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-100 text-red-800 border border-red-200">
-                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                                Em Aula
-                              </span>
-                            )}
-                            {isLivre && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                Livre
-                              </span>
-                            )}
-                            {isConcluido && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-800 border border-blue-200">
-                                Concluído
-                              </span>
-                            )}
-                            {room.status === 'sem_aula' && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200">
-                                Sem Aula
-                              </span>
+                            {viewMode === 'dia_anterior' ? (
+                              temAulaHoje ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-900 border border-blue-200">
+                                  <Clock className="w-2.5 h-2.5 text-[#1D4E8C]" />
+                                  Hoje às {room.classesHoje[0].inicio}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                  <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                  Livre Hoje
+                                </span>
+                              )
+                            ) : (
+                              <>
+                                {isEmAulaHoje && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-100 text-red-800 border border-red-200">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                                    Em Aula
+                                  </span>
+                                )}
+                                {isLivreHoje && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                    Livre
+                                  </span>
+                                )}
+                                {isConcluidoHoje && (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-800 border border-blue-200">
+                                    Concluído
+                                  </span>
+                                )}
+                                {room.statusHoje === 'sem_aula' && (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200">
+                                    Sem Aula
+                                  </span>
+                                )}
+                              </>
                             )}
                           </div>
                         </div>
 
-                        {/* COLUNA 2: STATUS & INFORMATIVO OPERACIONAL */}
-                        <div className="flex items-center gap-2 lg:w-[320px] xl:w-[360px] shrink-0 min-w-0">
+                        {/* COLUNA 2: STATUS & INFORMATIVO OPERACIONAL (DIRETO E SEM TURMAS) */}
+                        <div className="flex items-center gap-2 lg:w-[340px] xl:w-[400px] shrink-0 min-w-0">
                           {/* Badge de Status no Desktop */}
                           <div className="hidden lg:block shrink-0">
-                            {isEmAula && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-100 text-red-800 border border-red-200">
-                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                                Em Aula
-                              </span>
-                            )}
-                            {isLivre && (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                Livre
-                              </span>
-                            )}
-                            {isConcluido && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-800 border border-blue-200">
-                                Concluído
-                              </span>
-                            )}
-                            {room.status === 'sem_aula' && (
-                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200">
-                                Sem Aula
-                              </span>
+                            {viewMode === 'dia_anterior' ? (
+                              temAulaHoje ? (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-900 border border-blue-200">
+                                  <Clock className="w-2.5 h-2.5 text-[#1D4E8C]" />
+                                  Hoje às {room.classesHoje[0].inicio}
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                  <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                  Livre Hoje
+                                </span>
+                              )
+                            ) : (
+                              <>
+                                {isEmAulaHoje && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-100 text-red-800 border border-red-200">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                                    Em Aula
+                                  </span>
+                                )}
+                                {isLivreHoje && (
+                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                    Livre
+                                  </span>
+                                )}
+                                {isConcluidoHoje && (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-800 border border-blue-200">
+                                    Concluído
+                                  </span>
+                                )}
+                                {room.statusHoje === 'sem_aula' && (
+                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200">
+                                    Sem Aula
+                                  </span>
+                                )}
+                              </>
                             )}
                           </div>
 
-                          {/* Texto de apoio operacional conciso */}
+                          {/* Texto de apoio operacional conciso (SEM TURMA!) */}
                           <div className="min-w-0 flex-1 truncate text-[11px] leading-tight">
-                            {isEmAula && (
-                              <span className="text-red-800 font-bold">
-                                Ocupada até <strong>{room.currentClass?.fim}</strong>
-                                {room.currentClass?.aula.turma && (
-                                  <span className="font-normal text-red-700"> • {room.currentClass.aula.turma}</span>
+                            {viewMode === 'dia_anterior' ? (
+                              temAulaHoje ? (
+                                <span className="text-[#1D4E8C] font-bold">
+                                  Prioridade: aula hoje às <strong>{room.classesHoje[0].inicio}</strong>
+                                </span>
+                              ) : (
+                                <span className="text-emerald-800 font-bold">
+                                  Sem aulas hoje • Liberada para limpeza geral
+                                </span>
+                              )
+                            ) : (
+                              <>
+                                {isEmAulaHoje && (
+                                  <span className="text-red-800 font-bold">
+                                    Ocupada até as <strong>{room.currentClassHoje?.fim}</strong>
+                                  </span>
                                 )}
-                              </span>
-                            )}
-                            {isLivre && (
-                              <span className="text-emerald-800 font-bold">
-                                {room.nextClass ? (
-                                  <>
-                                    Liberada até <strong>{room.nextClass.inicio}</strong>
-                                    <span className="font-normal text-emerald-700"> • Próx: {room.nextClass.aula.turma}</span>
-                                  </>
-                                ) : (
-                                  <>
-                                    Liberada para higienização
-                                    <span className="font-normal text-emerald-700"> • Sem mais aulas</span>
-                                  </>
+                                {isLivreHoje && (
+                                  <span className="text-emerald-800 font-bold">
+                                    {room.nextClassHoje ? (
+                                      <span>Liberada até as <strong>{room.nextClassHoje.inicio}</strong></span>
+                                    ) : (
+                                      <span>Liberada para higienização • Sem mais aulas hoje</span>
+                                    )}
+                                  </span>
                                 )}
-                              </span>
-                            )}
-                            {isConcluido && (
-                              <span className="text-[#1D4E8C] font-semibold">
-                                Aulas encerradas hoje • Pronto p/ limpeza
-                              </span>
-                            )}
-                            {room.status === 'sem_aula' && (
-                              <span className="text-slate-400 font-normal italic">
-                                Sem atividades hoje
-                              </span>
+                                {isConcluidoHoje && (
+                                  <span className="text-[#1D4E8C] font-semibold">
+                                    Aulas encerradas hoje • Pronto p/ limpeza
+                                  </span>
+                                )}
+                                {room.statusHoje === 'sem_aula' && (
+                                  <span className="text-slate-400 font-normal italic">
+                                    Sem atividades agendadas hoje
+                                  </span>
+                                )}
+                              </>
                             )}
                           </div>
                         </div>
 
-                        {/* COLUNA 3: CRONOGRAMA DE AULAS EM CHIPS COMPACTOS */}
+                        {/* COLUNA 3: CHIPS DE HORÁRIOS COMPACTOS (SEM CÓDIGOS DE TURMA!) */}
                         <div className="flex-1 min-w-0">
-                          {room.classes.length === 0 ? (
-                            <span className="text-[10px] text-slate-400 italic hidden lg:inline">
-                              Nenhuma aula agendada
-                            </span>
-                          ) : (
-                            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
-                              {room.classes.map((cls, classIdx) => {
-                                const isCurrent = currentMinutes >= cls.startMinutes && currentMinutes < cls.endMinutes;
-                                const isPast = currentMinutes >= cls.endMinutes;
-
-                                return (
+                          {viewMode === 'dia_anterior' ? (
+                            room.classesOntem.length === 0 ? (
+                              <span className="text-[10px] text-slate-400 italic">
+                                Sem registros de uso ontem
+                              </span>
+                            ) : (
+                              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
+                                {room.classesOntem.map((cls, classIdx) => (
                                   <span
                                     key={classIdx}
-                                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono whitespace-nowrap border ${
-                                      isCurrent
-                                        ? 'bg-red-100 text-red-900 border-red-300 font-bold ring-1 ring-red-400'
-                                        : isPast
-                                        ? 'bg-slate-50 text-slate-400 border-slate-200'
-                                        : 'bg-[#F8FAFC] text-[#0F2A52] border-[#CBD5E1] font-medium'
-                                    }`}
+                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono whitespace-nowrap border bg-[#F8FAFC] text-[#0F2A52] border-[#CBD5E1] font-semibold"
                                   >
-                                    <Clock className={`w-2.5 h-2.5 ${isCurrent ? 'text-red-500' : 'text-[#F4901E]'}`} />
+                                    <Clock className="w-2.5 h-2.5 text-[#F4901E]" />
                                     <span>{cls.inicio}–{cls.fim}</span>
                                     <span className="font-sans text-[8px] uppercase font-bold text-[#1D4E8C] bg-[#DBEAFE] px-1 rounded-xs">
                                       {cls.turno[0]}
                                     </span>
-                                    <span className="font-sans text-[10px] text-[#475569] truncate max-w-[85px] sm:max-w-[120px]">
-                                      {cls.aula.turma}
-                                    </span>
-                                    {isCurrent && (
-                                      <span className="font-sans text-[8px] uppercase font-black text-red-600 animate-pulse">Agora</span>
-                                    )}
                                   </span>
-                                );
-                              })}
-                            </div>
+                                ))}
+                              </div>
+                            )
+                          ) : (
+                            room.classesHoje.length === 0 ? (
+                              <span className="text-[10px] text-slate-400 italic hidden lg:inline">
+                                Nenhuma aula agendada
+                              </span>
+                            ) : (
+                              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
+                                {room.classesHoje.map((cls, classIdx) => {
+                                  const isCurrent = currentMinutes >= cls.startMinutes && currentMinutes < cls.endMinutes;
+                                  const isPast = currentMinutes >= cls.endMinutes;
+
+                                  return (
+                                    <span
+                                      key={classIdx}
+                                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono whitespace-nowrap border ${
+                                        isCurrent
+                                          ? 'bg-red-100 text-red-900 border-red-300 font-bold ring-1 ring-red-400'
+                                          : isPast
+                                          ? 'bg-slate-50 text-slate-400 border-slate-200'
+                                          : 'bg-[#F8FAFC] text-[#0F2A52] border-[#CBD5E1] font-semibold'
+                                      }`}
+                                    >
+                                      <Clock className={`w-2.5 h-2.5 ${isCurrent ? 'text-red-500' : 'text-[#F4901E]'}`} />
+                                      <span>{cls.inicio}–{cls.fim}</span>
+                                      <span className="font-sans text-[8px] uppercase font-bold text-[#1D4E8C] bg-[#DBEAFE] px-1 rounded-xs">
+                                        {cls.turno[0]}
+                                      </span>
+                                      {isCurrent && (
+                                        <span className="font-sans text-[8px] uppercase font-black text-red-600 animate-pulse">
+                                          Agora
+                                        </span>
+                                      )}
+                                    </span>
+                                  );
+                                })}
+                              </div>
+                            )
                           )}
                         </div>
                       </div>
