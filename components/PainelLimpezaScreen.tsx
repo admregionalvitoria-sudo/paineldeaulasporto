@@ -438,6 +438,22 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
           </div>
         ) : (
           <div className="flex flex-col gap-2.5 sm:gap-3">
+            {/* Cabeçalho de Colunas da Lista (visível em telas médias/grandes) */}
+            <div className="hidden lg:flex items-center justify-between px-5 py-2 text-[11px] font-black uppercase tracking-wider text-[#6B7280] bg-white/80 backdrop-blur-xs rounded-xl border border-[#CBD5E1] shadow-2xs">
+              <div className="w-[400px] xl:w-[460px] flex items-center gap-2">
+                <DoorOpen className="w-4 h-4 text-[#F4901E]" />
+                <span>Ambiente / Sala</span>
+              </div>
+              <div className="w-[380px] xl:w-[420px] flex items-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                <span>Status & Higienização</span>
+              </div>
+              <div className="flex-1 flex items-center gap-2">
+                <Clock className="w-4 h-4 text-[#1D4E8C]" />
+                <span>Cronograma de Aulas do Dia</span>
+              </div>
+            </div>
+
             <AnimatePresence mode="popLayout">
               {filteredRooms.map((room, idx) => {
                 const hasObs = !!room.observacao?.observacao;
@@ -482,29 +498,29 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
                       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
                         
                         {/* DESTAQUE DO NOME DA SALA */}
-                        <div className="flex items-center gap-3 min-w-0 lg:w-[360px] xl:w-[420px] shrink-0">
+                        <div className="flex items-center gap-3 min-w-0 lg:w-[400px] xl:w-[460px] shrink-0">
                           <div
-                            className={`p-2 sm:p-2.5 rounded-xl flex items-center justify-center shrink-0 border ${
+                            className={`p-2 sm:p-2.5 rounded-xl flex items-center justify-center shrink-0 border shadow-2xs ${
                               isEmAula
                                 ? 'bg-red-50 text-red-600 border-red-200'
                                 : isLivre
                                 ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
-                                : 'bg-[#F1F5F9] text-[#0F2A52] border-slate-200'
+                                : 'bg-slate-100 text-[#0F2A52] border-slate-200'
                             }`}
                           >
                             <DoorOpen className="w-5 h-5 sm:w-6 sm:h-6" />
                           </div>
 
                           <div className="min-w-0 flex-1">
-                            {/* Nome da sala com super destaque visual */}
+                            {/* Nome da sala com super destaque visual (Badge Navy Alto Contraste) */}
                             <div className="flex items-center gap-2 flex-wrap">
-                              <h2 className="text-base sm:text-lg md:text-xl font-black uppercase tracking-tight text-[#0F2A52] leading-tight px-2.5 py-1 rounded-lg bg-[#F8FAFC] border border-[#CBD5E1] shadow-2xs">
+                              <h2 className="text-sm sm:text-base lg:text-[16px] font-black uppercase tracking-tight text-white bg-[#0F2A52] px-3 py-1.5 rounded-xl shadow-xs border border-[#1D4E8C] leading-snug">
                                 {room.nomeFormatado}
                               </h2>
                             </div>
 
                             <div className="flex items-center gap-2 mt-1 text-[11px] text-[#6B7280]">
-                              <span className="font-bold">
+                              <span className="font-bold text-[#0F2A52]">
                                 {room.classes.length > 0 ? `${room.classes.length} turno(s) no dia` : 'Sem agendamentos'}
                               </span>
                               {room.observacao?.atualizadoPor && (
