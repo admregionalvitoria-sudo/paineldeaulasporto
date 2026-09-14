@@ -437,19 +437,19 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
             </button>
           </div>
         ) : (
-          <div className="flex flex-col gap-2.5 sm:gap-3">
-            {/* Cabeçalho de Colunas da Lista (visível em telas médias/grandes) */}
-            <div className="hidden lg:flex items-center justify-between px-5 py-2 text-[11px] font-black uppercase tracking-wider text-[#6B7280] bg-white/80 backdrop-blur-xs rounded-xl border border-[#CBD5E1] shadow-2xs">
-              <div className="w-[400px] xl:w-[460px] flex items-center gap-2">
-                <DoorOpen className="w-4 h-4 text-[#F4901E]" />
+          <div className="flex flex-col gap-1.5 sm:gap-2">
+            {/* Cabeçalho compacto para telas grandes */}
+            <div className="hidden lg:flex items-center justify-between px-4 py-1.5 text-[10px] font-black uppercase tracking-wider text-[#6B7280] bg-white/70 backdrop-blur-xs rounded-lg border border-[#CBD5E1] shadow-2xs">
+              <div className="w-[320px] xl:w-[380px] flex items-center gap-1.5">
+                <DoorOpen className="w-3.5 h-3.5 text-[#F4901E]" />
                 <span>Ambiente / Sala</span>
               </div>
-              <div className="w-[380px] xl:w-[420px] flex items-center gap-2">
-                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              <div className="w-[320px] xl:w-[360px] flex items-center gap-1.5">
+                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600" />
                 <span>Status & Higienização</span>
               </div>
-              <div className="flex-1 flex items-center gap-2">
-                <Clock className="w-4 h-4 text-[#1D4E8C]" />
+              <div className="flex-1 flex items-center gap-1.5">
+                <Clock className="w-3.5 h-3.5 text-[#1D4E8C]" />
                 <span>Cronograma de Aulas do Dia</span>
               </div>
             </div>
@@ -461,16 +461,21 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
                 const isLivre = room.status === 'livre';
                 const isConcluido = room.status === 'concluido';
 
+                // Separação inteligente: Nome Principal (ex: Laboratório 01) e Subtítulo (Espaço...)
+                const parts = (room.nomeFormatado || room.sala).split(' — ');
+                const mainName = parts[0] || room.nomeFormatado;
+                const subName = parts.length > 1 ? parts.slice(1).join(' • ') : '';
+
                 return (
                   <motion.div
                     key={room.sala}
-                    initial={{ opacity: 0, y: 6 }}
+                    initial={{ opacity: 0, y: 4 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.98 }}
-                    transition={{ delay: Math.min(idx * 0.012, 0.2), duration: 0.2 }}
-                    className={`rounded-2xl bg-white border transition-all shadow-xs hover:shadow-md relative overflow-hidden flex flex-col justify-between ${
+                    transition={{ delay: Math.min(idx * 0.008, 0.15), duration: 0.15 }}
+                    className={`rounded-xl bg-white border transition-all shadow-2xs hover:shadow-xs relative overflow-hidden flex flex-col justify-center px-2.5 py-2 sm:px-4 sm:py-2.5 ${
                       hasObs
-                        ? 'border-[#F4901E] ring-2 ring-[#F4901E]/25'
+                        ? 'border-[#F4901E] ring-1 ring-[#F4901E]/35 bg-amber-50/10'
                         : isEmAula
                         ? 'border-red-200'
                         : isLivre
@@ -478,7 +483,7 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
                         : 'border-[#CBD5E1]'
                     }`}
                   >
-                    {/* Borda lateral colorida indicando o status em tempo real */}
+                    {/* Borda lateral colorida fina indicando o status */}
                     <div
                       className={`absolute top-0 bottom-0 left-0 w-1.5 sm:w-2 ${
                         hasObs
@@ -493,185 +498,151 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
                       }`}
                     />
 
-                    <div className="p-3 sm:p-4 pl-4 sm:pl-5 flex flex-col gap-3">
-                      {/* Linha Principal da Lista: Sala em Destaque + Status + Informativo de Higienização */}
-                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3">
+                    <div className="pl-1.5 sm:pl-2 flex flex-col gap-1">
+                      {/* LINHA 1 (No Desktop divide em 3 colunas; No Mobile divide entre Sala e Status) */}
+                      <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-1.5 lg:gap-3">
                         
-                        {/* DESTAQUE DO NOME DA SALA */}
-                        <div className="flex items-center gap-3 min-w-0 lg:w-[400px] xl:w-[460px] shrink-0">
-                          <div
-                            className={`p-2 sm:p-2.5 rounded-xl flex items-center justify-center shrink-0 border shadow-2xs ${
-                              isEmAula
-                                ? 'bg-red-50 text-red-600 border-red-200'
-                                : isLivre
-                                ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
-                                : 'bg-slate-100 text-[#0F2A52] border-slate-200'
-                            }`}
-                          >
-                            <DoorOpen className="w-5 h-5 sm:w-6 sm:h-6" />
-                          </div>
-
-                          <div className="min-w-0 flex-1">
-                            {/* Nome da sala com super destaque visual (Badge Navy Alto Contraste) */}
-                            <div className="flex items-center gap-2 flex-wrap">
-                              <h2 className="text-sm sm:text-base lg:text-[16px] font-black uppercase tracking-tight text-white bg-[#0F2A52] px-3 py-1.5 rounded-xl shadow-xs border border-[#1D4E8C] leading-snug">
-                                {room.nomeFormatado}
-                              </h2>
-                            </div>
-
-                            <div className="flex items-center gap-2 mt-1 text-[11px] text-[#6B7280]">
-                              <span className="font-bold text-[#0F2A52]">
-                                {room.classes.length > 0 ? `${room.classes.length} turno(s) no dia` : 'Sem agendamentos'}
+                        {/* COLUNA 1: NOME DA SALA EM SUPER DESTAQUE */}
+                        <div className="flex items-center justify-between lg:justify-start gap-2 min-w-0 lg:w-[320px] xl:w-[380px] shrink-0">
+                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                            <span className="text-xs sm:text-sm font-black uppercase text-[#0F2A52] tracking-tight bg-[#EEF2F6] border border-[#CBD5E1] px-2 py-0.5 rounded-md shrink-0 shadow-2xs">
+                              {mainName}
+                            </span>
+                            {subName && (
+                              <span className="text-[10px] sm:text-xs text-[#64748B] font-semibold truncate" title={subName}>
+                                {subName}
                               </span>
-                              {room.observacao?.atualizadoPor && (
-                                <>
-                                  <span>•</span>
-                                  <span className="truncate max-w-[140px]" title={room.observacao.atualizadoPor}>
-                                    Por: {room.observacao.atualizadoPor}
-                                  </span>
-                                </>
-                              )}
-                            </div>
+                            )}
                           </div>
-                        </div>
 
-                        {/* STATUS & SITUAÇÃO ATUAL PARA A EQUIPE DE APOIO */}
-                        <div className="flex flex-col sm:flex-row sm:items-center gap-2 lg:w-[380px] xl:w-[420px] shrink-0">
-                          {/* Badge de Status */}
-                          <div className="shrink-0">
+                          {/* Badge de Status no Mobile (alinhado à direita na Linha 1) */}
+                          <div className="shrink-0 lg:hidden">
                             {isEmAula && (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-red-100 text-red-800 border border-red-200 shadow-xs">
-                                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse" />
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-100 text-red-800 border border-red-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
                                 Em Aula
                               </span>
                             )}
                             {isLivre && (
-                              <span className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200 shadow-xs">
-                                <span className="w-2 h-2 rounded-full bg-emerald-500" />
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
                                 Livre
                               </span>
                             )}
                             {isConcluido && (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider bg-blue-100 text-blue-800 border border-blue-200 shadow-xs">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-800 border border-blue-200">
                                 Concluído
                               </span>
                             )}
                             {room.status === 'sem_aula' && (
-                              <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[10px] font-bold text-slate-500 bg-slate-100 border border-slate-200">
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200">
+                                Sem Aula
+                              </span>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* COLUNA 2: STATUS & INFORMATIVO OPERACIONAL */}
+                        <div className="flex items-center gap-2 lg:w-[320px] xl:w-[360px] shrink-0 min-w-0">
+                          {/* Badge de Status no Desktop */}
+                          <div className="hidden lg:block shrink-0">
+                            {isEmAula && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-100 text-red-800 border border-red-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                                Em Aula
+                              </span>
+                            )}
+                            {isLivre && (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                                Livre
+                              </span>
+                            )}
+                            {isConcluido && (
+                              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-800 border border-blue-200">
+                                Concluído
+                              </span>
+                            )}
+                            {room.status === 'sem_aula' && (
+                              <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200">
                                 Sem Aula
                               </span>
                             )}
                           </div>
 
-                          {/* Detalhamento Operacional */}
-                          <div
-                            className={`flex-1 rounded-xl px-2.5 py-1.5 text-xs font-bold flex items-center gap-2 border ${
-                              isEmAula
-                                ? 'bg-red-50 text-red-900 border-red-200'
-                                : isLivre
-                                ? 'bg-emerald-50 text-emerald-900 border-emerald-200'
-                                : isConcluido
-                                ? 'bg-blue-50 text-[#0F2A52] border-blue-200'
-                                : 'bg-slate-50 text-slate-600 border-slate-200'
-                            }`}
-                          >
+                          {/* Texto de apoio operacional conciso */}
+                          <div className="min-w-0 flex-1 truncate text-[11px] leading-tight">
                             {isEmAula && (
-                              <>
-                                <Clock className="w-3.5 h-3.5 text-red-600 shrink-0 animate-pulse" />
-                                <div className="min-w-0 flex-1 leading-snug">
-                                  <span>Ocupada até as <strong>{room.currentClass?.fim}</strong></span>
-                                  <span className="block text-[10px] font-normal text-red-800 truncate">
-                                    Turma: {room.currentClass?.aula.turma}
-                                  </span>
-                                </div>
-                              </>
+                              <span className="text-red-800 font-bold">
+                                Ocupada até <strong>{room.currentClass?.fim}</strong>
+                                {room.currentClass?.aula.turma && (
+                                  <span className="font-normal text-red-700"> • {room.currentClass.aula.turma}</span>
+                                )}
+                              </span>
                             )}
                             {isLivre && (
-                              <>
-                                <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                                <div className="min-w-0 flex-1 leading-snug">
-                                  {room.nextClass ? (
-                                    <>
-                                      <span>Liberada até as <strong>{room.nextClass.inicio}</strong></span>
-                                      <span className="block text-[10px] font-normal text-emerald-800 truncate">
-                                        Próx: {room.nextClass.aula.turma}
-                                      </span>
-                                    </>
-                                  ) : (
-                                    <>
-                                      <span>Liberada para higienização</span>
-                                      <span className="block text-[10px] font-normal text-emerald-800">
-                                        Sem mais aulas hoje
-                                      </span>
-                                    </>
-                                  )}
-                                </div>
-                              </>
+                              <span className="text-emerald-800 font-bold">
+                                {room.nextClass ? (
+                                  <>
+                                    Liberada até <strong>{room.nextClass.inicio}</strong>
+                                    <span className="font-normal text-emerald-700"> • Próx: {room.nextClass.aula.turma}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    Liberada para higienização
+                                    <span className="font-normal text-emerald-700"> • Sem mais aulas</span>
+                                  </>
+                                )}
+                              </span>
                             )}
                             {isConcluido && (
-                              <>
-                                <CheckCircle2 className="w-3.5 h-3.5 text-[#1D4E8C] shrink-0" />
-                                <div className="min-w-0 flex-1 leading-snug">
-                                  <span>Aulas encerradas</span>
-                                  <span className="block text-[10px] font-normal text-slate-600">
-                                    Pronto para limpeza geral
-                                  </span>
-                                </div>
-                              </>
+                              <span className="text-[#1D4E8C] font-semibold">
+                                Aulas encerradas hoje • Pronto p/ limpeza
+                              </span>
                             )}
                             {room.status === 'sem_aula' && (
-                              <>
-                                <Info className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-                                <span className="text-[11px]">Sem atividades agendadas hoje</span>
-                              </>
+                              <span className="text-slate-400 font-normal italic">
+                                Sem atividades hoje
+                              </span>
                             )}
                           </div>
                         </div>
 
-                        {/* HORÁRIOS DO DIA EM LINHA (TIMELINE HORIZONTAL) */}
+                        {/* COLUNA 3: CRONOGRAMA DE AULAS EM CHIPS COMPACTOS */}
                         <div className="flex-1 min-w-0">
-                          <div className="text-[9px] font-black uppercase tracking-wider text-[#6B7280] mb-1 flex items-center gap-1.5">
-                            <Clock className="w-3 h-3 text-[#1D4E8C]" />
-                            <span>Horários do Dia ({room.classes.length})</span>
-                          </div>
-
                           {room.classes.length === 0 ? (
-                            <div className="text-xs text-[#94A3B8] italic py-1">
-                              Nenhuma aula cadastrada hoje.
-                            </div>
+                            <span className="text-[10px] text-slate-400 italic hidden lg:inline">
+                              Nenhuma aula agendada
+                            </span>
                           ) : (
-                            <div className="flex flex-wrap items-center gap-1.5">
+                            <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
                               {room.classes.map((cls, classIdx) => {
                                 const isCurrent = currentMinutes >= cls.startMinutes && currentMinutes < cls.endMinutes;
                                 const isPast = currentMinutes >= cls.endMinutes;
 
                                 return (
-                                  <div
+                                  <span
                                     key={classIdx}
-                                    className={`px-2 py-1 rounded-lg border text-xs flex items-center gap-1.5 transition-all ${
+                                    className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono whitespace-nowrap border ${
                                       isCurrent
-                                        ? 'bg-red-50 border-red-300 ring-1 ring-red-300 font-bold text-red-950'
+                                        ? 'bg-red-100 text-red-900 border-red-300 font-bold ring-1 ring-red-400'
                                         : isPast
-                                        ? 'bg-slate-50/80 border-slate-200 text-slate-400 opacity-60'
-                                        : 'bg-[#F8FAFC] border-[#E2E8F0] text-[#0F2A52]'
+                                        ? 'bg-slate-50 text-slate-400 border-slate-200'
+                                        : 'bg-[#F8FAFC] text-[#0F2A52] border-[#CBD5E1] font-medium'
                                     }`}
                                   >
-                                    <div className="flex items-center gap-1 font-mono font-bold">
-                                      <Clock className={`w-3 h-3 ${isCurrent ? 'text-red-500' : 'text-[#F4901E]'}`} />
-                                      <span>{cls.inicio} — {cls.fim}</span>
-                                    </div>
-                                    <span className="text-[8px] uppercase px-1 py-0.2 rounded bg-[#DBEAFE] text-[#1D4E8C] font-sans font-black">
-                                      {cls.turno}
+                                    <Clock className={`w-2.5 h-2.5 ${isCurrent ? 'text-red-500' : 'text-[#F4901E]'}`} />
+                                    <span>{cls.inicio}–{cls.fim}</span>
+                                    <span className="font-sans text-[8px] uppercase font-bold text-[#1D4E8C] bg-[#DBEAFE] px-1 rounded-xs">
+                                      {cls.turno[0]}
                                     </span>
-                                    <span className="font-semibold truncate max-w-[110px] sm:max-w-[150px]" title={cls.aula.turma}>
+                                    <span className="font-sans text-[10px] text-[#475569] truncate max-w-[85px] sm:max-w-[120px]">
                                       {cls.aula.turma}
                                     </span>
                                     {isCurrent && (
-                                      <span className="text-[8px] font-black uppercase px-1.5 py-0.2 rounded-full bg-red-500 text-white animate-pulse">
-                                        Agora
-                                      </span>
+                                      <span className="font-sans text-[8px] uppercase font-black text-red-600 animate-pulse">Agora</span>
                                     )}
-                                  </div>
+                                  </span>
                                 );
                               })}
                             </div>
@@ -679,18 +650,17 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
                         </div>
                       </div>
 
-                      {/* AVISO DA GESTÃO / OBSERVAÇÃO (SE HOUVER) */}
+                      {/* LINHA DE AVISO DA GESTÃO (APENAS SE HOUVER OBSERVAÇÃO) */}
                       {hasObs && (
-                        <div className="p-2.5 rounded-xl bg-amber-50 border-2 border-[#F4901E] flex items-start gap-2 text-xs font-bold text-amber-950 shadow-xs">
-                          <AlertTriangle className="w-4 h-4 text-[#F4901E] shrink-0 mt-0.5" />
-                          <div className="min-w-0 flex-1">
-                            <span className="text-[9px] font-black uppercase tracking-wider text-[#F4901E] block mb-0.5">
-                              Aviso da Gestão:
+                        <div className="mt-0.5 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 flex items-center gap-1.5 text-[10px] text-amber-950 font-bold shadow-2xs">
+                          <AlertTriangle className="w-3 h-3 text-[#F4901E] shrink-0" />
+                          <span className="text-[#F4901E] font-black uppercase text-[9px] shrink-0">Aviso:</span>
+                          <span className="truncate flex-1">{room.observacao?.observacao}</span>
+                          {room.observacao?.atualizadoPor && (
+                            <span className="text-[9px] text-amber-800/80 font-normal shrink-0">
+                              ({room.observacao.atualizadoPor})
                             </span>
-                            <p className="leading-snug text-xs font-bold text-[#0F2A52]">
-                              "{room.observacao?.observacao}"
-                            </p>
-                          </div>
+                          )}
                         </div>
                       )}
                     </div>
