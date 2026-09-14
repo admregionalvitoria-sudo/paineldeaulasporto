@@ -1,4 +1,4 @@
-import React, { useContext, useState, useMemo, useEffect } from 'react';
+import React, { useContext, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DataContext, normalizarNomeAmbiente } from '../context/DataContext';
 import useCurrentTime from '../hooks/useCurrentTime';
@@ -10,10 +10,7 @@ import {
   DoorOpen,
   CheckCircle2,
   AlertTriangle,
-  Maximize,
-  Minimize,
-  ArrowLeft,
-  Tv
+  ArrowLeft
 } from 'lucide-react';
 
 interface PainelLimpezaScreenProps {
@@ -105,58 +102,20 @@ const parseTimeToMinutes = (timeStr: string | undefined, defaultTurno?: string):
   return { inicio, fim, start: startMinutes, end: endMinutes };
 };
 
-const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDashboard, onGoToAdmin }) => {
+const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDashboard }) => {
   const context = useContext(DataContext);
   const { formattedDate, formattedTime } = useCurrentTime();
 
-  // Modo Principal: 'dia_anterior' (padrão solicitado) ou 'hoje'
-  const [viewMode, setViewMode] = useState<'dia_anterior' | 'hoje'>('dia_anterior');
+  // Filtro único para a lista unificada
+  const [filter, setFilter] = useState<'todos' | 'com_aula_hoje' | 'livre_hoje' | 'usadas_ontem' | 'com_observacao'>('todos');
 
-  // Sub-filtros
-  const [filterOntem, setFilterOntem] = useState<'todos' | 'com_aula_hoje' | 'sem_aula_hoje' | 'com_observacao'>('todos');
-  const [filterHoje, setFilterHoje] = useState<'todos' | 'livre' | 'em_aula' | 'com_observacao' | 'sem_aula'>('todos');
-
-  const [isFullscreen, setIsFullscreen] = useState(false);
-  const [autoScroll, setAutoScroll] = useState(false);
-
-  // Monitorar Fullscreen
-  useEffect(() => {
-    const handleFS = () => setIsFullscreen(!!document.fullscreenElement);
-    document.addEventListener('fullscreenchange', handleFS);
-    return () => document.removeEventListener('fullscreenchange', handleFS);
-  }, []);
-
-  const toggleFullscreen = () => {
-    if (!document.fullscreenElement) {
-      document.documentElement.requestFullscreen().catch(() => {});
-    } else {
-      document.exitFullscreen().catch(() => {});
-    }
-  };
-
-  // Auto-scroll suave para TV
-  useEffect(() => {
-    if (!autoScroll) return;
-    const interval = setInterval(() => {
-      const scrollPos = window.scrollY;
-      const maxScroll = document.documentElement.scrollHeight - window.innerHeight;
-      if (scrollPos >= maxScroll - 10) {
-        window.scrollTo({ top: 0, behavior: 'smooth' });
-      } else {
-        window.scrollBy({ top: 2, behavior: 'smooth' });
-      }
-    }, 50);
-
-    return () => clearInterval(interval);
-  }, [autoScroll]);
-
-  // Minutos atuais do dia
+  // Minutos atuais do dia para rastrear status em tempo real
   const currentMinutes = useMemo(() => {
     const now = new Date();
     return now.getHours() * 60 + now.getMinutes();
   }, [formattedTime]);
 
-  // Cálculo da data de hoje e do dia anterior de uso com aulas
+  // Cálculo da data de hoje e do dia anterior com aulas
   const { todayStr, previousDayStr, previousDayDisplay } = useMemo(() => {
     const now = new Date();
     const day = String(now.getDate()).padStart(2, '0');
@@ -200,9 +159,9 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
     };
   }, [context]);
 
-  // Processar datasets: Salas Usadas Ontem vs Salas de Hoje
-  const { roomsDiaAnterior, roomsHoje } = useMemo(() => {
-    if (!context) return { roomsDiaAnterior: [], roomsHoje: [] };
+  // Processar dataset UNIFICADO: salas usadas ontem + salas de hoje, SEM REPETIR AMBIENTES
+  const unifiedRooms = useMemo(() => {
+    if (!context) return [];
 
     const aulasOntem = context.aulas.filter(a => (a.data || '').trim() === previousDayStr);
     const aulasHoje = context.aulas.filter(a => (a.data || '').trim() === todayStr);
@@ -214,7 +173,7 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
       classesHoje: RoomClassInfo[];
     }>();
 
-    // Processar aulas de ontem
+    // 1. Processar aulas de ontem
     aulasOntem.forEach(aula => {
       if (!aula.sala || !aula.sala.trim()) return;
       const norm = normalizarNomeAmbiente(aula.sala);
@@ -240,7 +199,7 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
       }
     });
 
-    // Processar aulas de hoje
+    // 2. Processar aulas de hoje (mesclando no mesmo mapa pelo nome normalizado da sala)
     aulasHoje.forEach(aula => {
       if (!aula.sala || !aula.sala.trim()) return;
       const norm = normalizarNomeAmbiente(aula.sala);
@@ -266,27 +225,18 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
       }
     });
 
-    // Se houver salas cadastradas
-    if (context.salasCadastradas) {
-      context.salasCadastradas.forEach(salaCadastrada => {
-        const norm = normalizarNomeAmbiente(salaCadastrada);
-        if (!allRoomsMap.has(norm)) {
-          allRoomsMap.set(norm, {
-            sala: formatarNomeSala(salaCadastrada) || salaCadastrada,
-            nomeCurto: getNomeCurtoSala(salaCadastrada),
-            classesOntem: [],
-            classesHoje: []
-          });
-        }
-      });
-    }
-
-    const listDiaAnterior: RoomCleanItem[] = [];
-    const listHoje: RoomCleanItem[] = [];
+    const list: RoomCleanItem[] = [];
 
     allRoomsMap.forEach((roomData, norm) => {
       const sortedOntem = [...roomData.classesOntem].sort((a, b) => a.startMinutes - b.startMinutes);
       const sortedHoje = [...roomData.classesHoje].sort((a, b) => a.startMinutes - b.startMinutes);
+
+      const observacao = context.observacoesLimpeza?.[norm];
+
+      // Inclui no painel se a sala foi usada ontem OU tem aula hoje OU tem aviso da gestão
+      if (sortedOntem.length === 0 && sortedHoje.length === 0 && !observacao?.observacao) {
+        return;
+      }
 
       const currentClassHoje = sortedHoje.find(
         c => currentMinutes >= c.startMinutes && currentMinutes < c.endMinutes
@@ -305,9 +255,7 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
         statusHoje = 'livre';
       }
 
-      const observacao = context.observacoesLimpeza?.[norm];
-
-      const item: RoomCleanItem = {
+      list.push({
         sala: roomData.sala,
         nomeCurto: roomData.nomeCurto,
         norm,
@@ -317,24 +265,15 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
         nextClassHoje,
         statusHoje,
         observacao
-      };
-
-      // Salas do dia anterior: apenas salas que FORAM USADAS ontem (ou têm observação da gestão)
-      if (sortedOntem.length > 0 || observacao?.observacao) {
-        listDiaAnterior.push(item);
-      }
-
-      // Salas de hoje: salas com aulas hoje (ou têm observação da gestão)
-      if (sortedHoje.length > 0 || observacao?.observacao) {
-        listHoje.push(item);
-      }
+      });
     });
 
-    // Ordenação Dia Anterior:
-    // 1º Com aviso de gestão
-    // 2º Salas que têm aula hoje (urgência de limpeza antes da aula de hoje!)
-    // 3º Ordem alfabética do nome da sala
-    listDiaAnterior.sort((a, b) => {
+    // Ordenação Operacional Prioritária:
+    // 1º Com aviso da gestão (atenção imediata)
+    // 2º Salas com aula hoje ordenadas pelo horário de início mais cedo (precisam de limpeza prioritária antes dos alunos chegarem)
+    // 3º Salas usadas ontem que estão livres hoje (liberadas para limpeza completa)
+    // 4º Ordem alfabética pelo nome curto
+    list.sort((a, b) => {
       const aHasObs = !!a.observacao?.observacao;
       const bHasObs = !!b.observacao?.observacao;
       if (aHasObs && !bHasObs) return -1;
@@ -342,80 +281,51 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
 
       const aTemAulaHoje = a.classesHoje.length > 0;
       const bTemAulaHoje = b.classesHoje.length > 0;
+
       if (aTemAulaHoje && !bTemAulaHoje) return -1;
       if (!aTemAulaHoje && bTemAulaHoje) return 1;
 
-      return a.nomeCurto.localeCompare(b.nomeCurto, 'pt-BR', { numeric: true });
-    });
-
-    // Ordenação Hoje:
-    // 1º Com aviso
-    // 2º Em aula
-    // 3º Livre
-    // 4º Nome
-    listHoje.sort((a, b) => {
-      const aHasObs = !!a.observacao?.observacao;
-      const bHasObs = !!b.observacao?.observacao;
-      if (aHasObs && !bHasObs) return -1;
-      if (!aHasObs && bHasObs) return 1;
-
-      if (a.statusHoje === 'em_aula' && b.statusHoje !== 'em_aula') return -1;
-      if (a.statusHoje !== 'em_aula' && b.statusHoje === 'em_aula') return 1;
+      if (aTemAulaHoje && bTemAulaHoje) {
+        const aStart = a.classesHoje[0].startMinutes;
+        const bStart = b.classesHoje[0].startMinutes;
+        if (aStart !== bStart) return aStart - bStart;
+      }
 
       return a.nomeCurto.localeCompare(b.nomeCurto, 'pt-BR', { numeric: true });
     });
 
-    return { roomsDiaAnterior: listDiaAnterior, roomsHoje: listHoje };
+    return list;
   }, [context, previousDayStr, todayStr, currentMinutes]);
 
-  // Métricas do Dia Anterior
-  const metricsOntem = useMemo(() => {
-    const total = roomsDiaAnterior.length;
-    const comAulaHoje = roomsDiaAnterior.filter(r => r.classesHoje.length > 0).length;
-    const semAulaHoje = roomsDiaAnterior.filter(r => r.classesHoje.length === 0).length;
-    const comObs = roomsDiaAnterior.filter(r => !!r.observacao?.observacao).length;
-    return { total, comAulaHoje, semAulaHoje, comObs };
-  }, [roomsDiaAnterior]);
+  // Métricas Unificadas
+  const metrics = useMemo(() => {
+    const total = unifiedRooms.length;
+    const comAulaHoje = unifiedRooms.filter(r => r.classesHoje.length > 0).length;
+    const semAulaHoje = unifiedRooms.filter(r => r.classesHoje.length === 0).length;
+    const usadasOntem = unifiedRooms.filter(r => r.classesOntem.length > 0).length;
+    const comObs = unifiedRooms.filter(r => !!r.observacao?.observacao).length;
+    return { total, comAulaHoje, semAulaHoje, usadasOntem, comObs };
+  }, [unifiedRooms]);
 
-  // Métricas de Hoje
-  const metricsHoje = useMemo(() => {
-    const comAula = roomsHoje.filter(r => r.classesHoje.length > 0);
-    const livres = comAula.filter(r => r.statusHoje === 'livre').length;
-    const emAula = comAula.filter(r => r.statusHoje === 'em_aula').length;
-    const concluidas = comAula.filter(r => r.statusHoje === 'concluido').length;
-    const comObs = roomsHoje.filter(r => !!r.observacao?.observacao).length;
-    const semAula = roomsHoje.filter(r => r.statusHoje === 'sem_aula').length;
-    return { totalComAula: comAula.length, livres, emAula, concluidas, comObs, semAula };
-  }, [roomsHoje]);
-
-  // Filtragem da Lista Ativa
+  // Filtragem da Lista
   const displayRooms = useMemo(() => {
-    if (viewMode === 'dia_anterior') {
-      return roomsDiaAnterior.filter(r => {
-        if (filterOntem === 'com_aula_hoje' && r.classesHoje.length === 0) return false;
-        if (filterOntem === 'sem_aula_hoje' && r.classesHoje.length > 0) return false;
-        if (filterOntem === 'com_observacao' && !r.observacao?.observacao) return false;
-        return true;
-      });
-    } else {
-      return roomsHoje.filter(r => {
-        if (filterHoje === 'livre' && r.statusHoje !== 'livre') return false;
-        if (filterHoje === 'em_aula' && r.statusHoje !== 'em_aula') return false;
-        if (filterHoje === 'com_observacao' && !r.observacao?.observacao) return false;
-        if (filterHoje === 'sem_aula' && r.statusHoje !== 'sem_aula') return false;
-        return true;
-      });
-    }
-  }, [viewMode, roomsDiaAnterior, roomsHoje, filterOntem, filterHoje]);
+    return unifiedRooms.filter(r => {
+      if (filter === 'com_aula_hoje' && r.classesHoje.length === 0) return false;
+      if (filter === 'livre_hoje' && r.classesHoje.length > 0) return false;
+      if (filter === 'usadas_ontem' && r.classesOntem.length === 0) return false;
+      if (filter === 'com_observacao' && !r.observacao?.observacao) return false;
+      return true;
+    });
+  }, [unifiedRooms, filter]);
 
   return (
     <div className="min-h-screen bg-[#EDF1F6] text-[#0F2A52] flex flex-col font-sans relative selection:bg-[#F4901E] selection:text-white pb-12">
       {/* Background sutil */}
       <div className="fixed inset-0 bg-[#F1F5F9] pointer-events-none z-0" />
 
-      {/* Header Focado em Mobile & Desktop (Sticky para fácil navegação) */}
+      {/* Header Focado em Operação Limpa (sem botões desnecessários) */}
       <header className="sticky top-0 z-30 px-3 py-2 sm:px-6 sm:py-2.5 border-b border-[#CBD5E1] bg-white/95 backdrop-blur-md shadow-xs flex items-center justify-between gap-2">
-        {/* Esquerda: Voltar + Logo */}
+        {/* Esquerda: Voltar + Logo SENAI */}
         <div className="flex items-center gap-2 min-w-0">
           {onReturnToDashboard && (
             <button
@@ -442,243 +352,111 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
           </div>
         </div>
 
-        {/* Centro / Direita: Relógio em tempo real + Botões */}
-        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
-          <div className="text-right flex flex-col items-end justify-center">
-            <div className="flex items-center gap-1.5">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
-              </span>
-              <h1 className="text-base sm:text-xl font-black tracking-tight leading-none text-[#0F2A52]">
-                {formattedTime}
-              </h1>
-            </div>
-            <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-wider text-[#6B7280]">
-              {formattedDate.split(',')[0]}
+        {/* Direita: Relógio em tempo real com indicador de status */}
+        <div className="text-right flex flex-col items-end justify-center">
+          <div className="flex items-center gap-1.5">
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500"></span>
             </span>
+            <h1 className="text-base sm:text-xl font-black tracking-tight leading-none text-[#0F2A52]">
+              {formattedTime}
+            </h1>
           </div>
-
-          <div className="flex items-center gap-1 sm:gap-1.5">
-            <button
-              onClick={() => setAutoScroll(prev => !prev)}
-              title={autoScroll ? "Desativar Rolagem Automática" : "Ativar Modo TV"}
-              className={`hidden sm:flex px-2.5 py-1.5 rounded-lg text-[9px] font-bold uppercase tracking-wider items-center gap-1 transition-all border cursor-pointer ${
-                autoScroll
-                  ? 'bg-purple-600 text-white border-purple-700 animate-pulse'
-                  : 'bg-white text-[#0F2A52] border-[#CBD5E1] hover:bg-[#F1F5F9]'
-              }`}
-            >
-              <Tv className="w-3 h-3" />
-              <span>{autoScroll ? 'Rolagem' : 'TV'}</span>
-            </button>
-
-            <button
-              onClick={toggleFullscreen}
-              title={isFullscreen ? "Sair da Tela Cheia" : "Tela Cheia"}
-              className="p-1.5 rounded-lg bg-white text-[#0F2A52] border border-[#CBD5E1] hover:bg-[#F1F5F9] active:bg-[#DBEAFE] transition-all cursor-pointer"
-            >
-              {isFullscreen ? <Minimize className="w-3.5 h-3.5" /> : <Maximize className="w-3.5 h-3.5" />}
-            </button>
-
-            {onGoToAdmin && (
-              <button
-                onClick={onGoToAdmin}
-                className="bg-[#0F2A52] hover:bg-[#1D4E8C] text-white px-2.5 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-all shadow-xs cursor-pointer"
-              >
-                Admin
-              </button>
-            )}
-          </div>
+          <span className="text-[8px] sm:text-[9px] font-bold uppercase tracking-wider text-[#6B7280]">
+            {formattedDate.split(',')[0]}
+          </span>
         </div>
       </header>
 
-      {/* Seletor Principal de Categoria & Filtros Rápidos */}
-      <section className="z-10 px-3 py-2 sm:px-6 sm:py-2.5 max-w-[2400px] mx-auto w-full flex flex-col gap-2">
-        {/* Abas Principais: Dia Anterior (Principal) vs Salas de Hoje */}
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setViewMode('dia_anterior')}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer shadow-xs ${
-              viewMode === 'dia_anterior'
-                ? 'bg-[#0F2A52] text-white ring-2 ring-[#0F2A52]/30 shadow-sm'
-                : 'bg-white text-[#0F2A52] border border-[#CBD5E1] hover:bg-[#F1F5F9]'
-            }`}
-          >
-            <Broom className="w-4 h-4 text-[#F4901E]" />
-            <span>Usadas no Dia Anterior ({previousDayDisplay})</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-              viewMode === 'dia_anterior' ? 'bg-[#F4901E] text-white' : 'bg-slate-100 text-[#0F2A52]'
-            }`}>
-              {metricsOntem.total}
-            </span>
-          </button>
-
-          <button
-            onClick={() => setViewMode('hoje')}
-            className={`flex-1 sm:flex-none flex items-center justify-center gap-1.5 px-3.5 py-2 rounded-xl text-xs sm:text-sm font-black transition-all cursor-pointer shadow-xs ${
-              viewMode === 'hoje'
-                ? 'bg-[#0F2A52] text-white ring-2 ring-[#0F2A52]/30 shadow-sm'
-                : 'bg-white text-[#0F2A52] border border-[#CBD5E1] hover:bg-[#F1F5F9]'
-            }`}
-          >
-            <DoorOpen className="w-4 h-4 text-[#1D4E8C]" />
-            <span>Salas de Hoje ({todayStr})</span>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
-              viewMode === 'hoje' ? 'bg-[#1D4E8C] text-white' : 'bg-slate-100 text-[#0F2A52]'
-            }`}>
-              {metricsHoje.totalComAula}
-            </span>
-          </button>
-        </div>
-
-        {/* Sub-filtros dinâmicos de acordo com a aba selecionada */}
+      {/* Barra de Filtros Rápidos (Lista Única e Direta) */}
+      <section className="z-10 px-3 py-2.5 sm:px-6 max-w-[2400px] mx-auto w-full flex flex-col gap-2">
         <div className="flex items-center gap-1.5 overflow-x-auto pb-1 -mx-3 px-3 sm:mx-0 sm:px-0 text-[11px] font-bold no-scrollbar flex-nowrap">
-          {viewMode === 'dia_anterior' ? (
-            <>
-              <button
-                onClick={() => setFilterOntem('todos')}
-                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-                  filterOntem === 'todos'
-                    ? 'bg-[#0F2A52] text-white border-[#0F2A52]'
-                    : 'bg-white text-[#0F2A52] border-[#CBD5E1] hover:bg-[#F1F5F9]'
-                }`}
-              >
-                <DoorOpen className="w-3.5 h-3.5 text-[#F4901E]" />
-                <span>Todas Usadas Ontem ({metricsOntem.total})</span>
-              </button>
+          <button
+            onClick={() => setFilter('todos')}
+            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+              filter === 'todos'
+                ? 'bg-[#0F2A52] text-white border-[#0F2A52]'
+                : 'bg-white text-[#0F2A52] border-[#CBD5E1] hover:bg-[#F1F5F9]'
+            }`}
+          >
+            <DoorOpen className="w-3.5 h-3.5 text-[#F4901E]" />
+            <span>Todos os Ambientes ({metrics.total})</span>
+          </button>
 
-              <button
-                onClick={() => setFilterOntem(filterOntem === 'com_aula_hoje' ? 'todos' : 'com_aula_hoje')}
-                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-                  filterOntem === 'com_aula_hoje'
-                    ? 'bg-[#1D4E8C] text-white border-[#1D4E8C] font-black'
-                    : 'bg-blue-50 text-[#1D4E8C] border-blue-200 hover:bg-blue-100'
-                }`}
-              >
-                <Clock className="w-3.5 h-3.5" />
-                <span>Com Aula Hoje ({metricsOntem.comAulaHoje})</span>
-              </button>
+          <button
+            onClick={() => setFilter(filter === 'com_aula_hoje' ? 'todos' : 'com_aula_hoje')}
+            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+              filter === 'com_aula_hoje'
+                ? 'bg-[#1D4E8C] text-white border-[#1D4E8C] font-black'
+                : 'bg-blue-50 text-[#1D4E8C] border-blue-200 hover:bg-blue-100'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span>Com Aula Hoje ({metrics.comAulaHoje})</span>
+          </button>
 
-              <button
-                onClick={() => setFilterOntem(filterOntem === 'sem_aula_hoje' ? 'todos' : 'sem_aula_hoje')}
-                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-                  filterOntem === 'sem_aula_hoje'
-                    ? 'bg-emerald-600 text-white border-emerald-700 font-black'
-                    : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
-                }`}
-              >
-                <CheckCircle2 className="w-3.5 h-3.5" />
-                <span>Sem Aula Hoje ({metricsOntem.semAulaHoje})</span>
-              </button>
+          <button
+            onClick={() => setFilter(filter === 'livre_hoje' ? 'todos' : 'livre_hoje')}
+            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+              filter === 'livre_hoje'
+                ? 'bg-emerald-600 text-white border-emerald-700 font-black'
+                : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
+            }`}
+          >
+            <CheckCircle2 className="w-3.5 h-3.5" />
+            <span>Livre Hoje ({metrics.semAulaHoje})</span>
+          </button>
 
-              {metricsOntem.comObs > 0 && (
-                <button
-                  onClick={() => setFilterOntem(filterOntem === 'com_observacao' ? 'todos' : 'com_observacao')}
-                  className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-                    filterOntem === 'com_observacao'
-                      ? 'bg-[#F4901E] text-white border-[#F4901E] font-black'
-                      : 'bg-amber-50 text-[#F4901E] border-amber-300 hover:bg-amber-100'
-                  }`}
-                >
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  <span>Avisos ({metricsOntem.comObs})</span>
-                </button>
-              )}
-            </>
-          ) : (
-            <>
-              <button
-                onClick={() => setFilterHoje('todos')}
-                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-                  filterHoje === 'todos'
-                    ? 'bg-[#0F2A52] text-white border-[#0F2A52]'
-                    : 'bg-white text-[#0F2A52] border-[#CBD5E1] hover:bg-[#F1F5F9]'
-                }`}
-              >
-                <DoorOpen className="w-3.5 h-3.5 text-[#F4901E]" />
-                <span>Todas do Dia ({metricsHoje.totalComAula})</span>
-              </button>
+          <button
+            onClick={() => setFilter(filter === 'usadas_ontem' ? 'todos' : 'usadas_ontem')}
+            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+              filter === 'usadas_ontem'
+                ? 'bg-amber-600 text-white border-amber-700 font-black'
+                : 'bg-amber-50 text-amber-800 border-amber-200 hover:bg-amber-100'
+            }`}
+          >
+            <Broom className="w-3.5 h-3.5 text-amber-600" />
+            <span>Usadas no Dia Anterior ({metrics.usadasOntem})</span>
+          </button>
 
-              <button
-                onClick={() => setFilterHoje(filterHoje === 'livre' ? 'todos' : 'livre')}
-                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-                  filterHoje === 'livre'
-                    ? 'bg-emerald-600 text-white border-emerald-700 font-black'
-                    : 'bg-emerald-50 text-emerald-800 border-emerald-200 hover:bg-emerald-100'
-                }`}
-              >
-                <span className="w-2 h-2 rounded-full bg-emerald-500" />
-                <span>Livres Agora ({metricsHoje.livres})</span>
-              </button>
-
-              <button
-                onClick={() => setFilterHoje(filterHoje === 'em_aula' ? 'todos' : 'em_aula')}
-                className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-                  filterHoje === 'em_aula'
-                    ? 'bg-red-600 text-white border-red-700 font-black'
-                    : 'bg-red-50 text-red-800 border-red-200 hover:bg-red-100'
-                }`}
-              >
-                <span className="w-2 h-2 rounded-full bg-red-500" />
-                <span>Em Aula ({metricsHoje.emAula})</span>
-              </button>
-
-              {metricsHoje.comObs > 0 && (
-                <button
-                  onClick={() => setFilterHoje(filterHoje === 'com_observacao' ? 'todos' : 'com_observacao')}
-                  className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
-                    filterHoje === 'com_observacao'
-                      ? 'bg-[#F4901E] text-white border-[#F4901E] font-black'
-                      : 'bg-amber-50 text-[#F4901E] border-amber-300 hover:bg-amber-100'
-                  }`}
-                >
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  <span>Avisos ({metricsHoje.comObs})</span>
-                </button>
-              )}
-
-              <button
-                onClick={() => setFilterHoje(filterHoje === 'sem_aula' ? 'todos' : 'sem_aula')}
-                className={`shrink-0 px-2.5 py-1.5 rounded-xl border transition-all cursor-pointer ${
-                  filterHoje === 'sem_aula'
-                    ? 'bg-slate-700 text-white border-slate-700'
-                    : 'bg-white text-slate-500 border-[#CBD5E1] hover:bg-[#F1F5F9]'
-                }`}
-              >
-                Sem Aula
-              </button>
-            </>
+          {metrics.comObs > 0 && (
+            <button
+              onClick={() => setFilter(filter === 'com_observacao' ? 'todos' : 'com_observacao')}
+              className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-xl border transition-all cursor-pointer shadow-xs ${
+                filter === 'com_observacao'
+                  ? 'bg-[#F4901E] text-white border-[#F4901E] font-black'
+                  : 'bg-amber-50 text-[#F4901E] border-amber-300 hover:bg-amber-100'
+              }`}
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>Avisos ({metrics.comObs})</span>
+            </button>
           )}
         </div>
       </section>
 
-      {/* Lista de Ambientes - Visualização Ultra-Compacta */}
+      {/* Lista de Ambientes Unificada - Visualização em Linha sem repetição de ambiente */}
       <main className="flex-1 px-3 sm:px-6 max-w-[2400px] mx-auto w-full z-10">
         {displayRooms.length === 0 ? (
           <div className="bg-white rounded-2xl border border-[#CBD5E1] p-8 text-center flex flex-col items-center justify-center my-4 shadow-xs">
             <DoorOpen className="w-10 h-10 text-[#F4901E] mb-2" />
             <h3 className="text-base font-black uppercase text-[#0F2A52]">Nenhum ambiente encontrado</h3>
             <p className="text-xs text-[#6B7280] max-w-sm mt-0.5">
-              {viewMode === 'dia_anterior'
-                ? `Não foram encontradas salas com uso registrado no dia anterior (${previousDayDisplay}).`
-                : 'Não foram encontradas salas para os filtros selecionados hoje.'}
+              Não foram encontrados ambientes que atendam ao filtro selecionado.
             </p>
             <button
-              onClick={() => {
-                setFilterOntem('todos');
-                setFilterHoje('todos');
-              }}
+              onClick={() => setFilter('todos')}
               className="mt-3 px-4 py-2 bg-[#0F2A52] text-white rounded-xl text-xs font-bold uppercase hover:bg-[#1D4E8C] cursor-pointer"
             >
-              Ver Todas
+              Ver Todos os Ambientes
             </button>
           </div>
         ) : (
           <div className="flex flex-col gap-1.5 sm:gap-2">
-            {/* Cabeçalho compacto para telas grandes */}
+            {/* Cabeçalho de Colunas para Desktop */}
             <div className="hidden lg:flex items-center justify-between px-4 py-1.5 text-[10px] font-black uppercase tracking-wider text-[#6B7280] bg-white/70 backdrop-blur-xs rounded-lg border border-[#CBD5E1] shadow-2xs">
-              <div className="w-[280px] xl:w-[320px] flex items-center gap-1.5">
+              <div className="w-[260px] xl:w-[300px] flex items-center gap-1.5">
                 <DoorOpen className="w-3.5 h-3.5 text-[#F4901E]" />
                 <span>Ambiente / Sala</span>
               </div>
@@ -688,11 +466,7 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
               </div>
               <div className="flex-1 flex items-center gap-1.5">
                 <Clock className="w-3.5 h-3.5 text-[#1D4E8C]" />
-                <span>
-                  {viewMode === 'dia_anterior'
-                    ? `Horários de Uso no Dia Anterior (${previousDayDisplay})`
-                    : 'Horários de Uso Hoje'}
-                </span>
+                <span>Horários de Uso (Ontem {previousDayDisplay} & Hoje {todayStr})</span>
               </div>
             </div>
 
@@ -700,13 +474,13 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
               {displayRooms.map((room, idx) => {
                 const hasObs = !!room.observacao?.observacao;
                 const temAulaHoje = room.classesHoje.length > 0;
+                const foiUsadaOntem = room.classesOntem.length > 0;
                 const isEmAulaHoje = room.statusHoje === 'em_aula';
-                const isLivreHoje = room.statusHoje === 'livre';
-                const isConcluidoHoje = room.statusHoje === 'concluido';
+                const isLivreHoje = !temAulaHoje;
 
                 return (
                   <motion.div
-                    key={room.sala}
+                    key={room.norm}
                     initial={{ opacity: 0, y: 4 }}
                     animate={{ opacity: 1, y: 0 }}
                     exit={{ opacity: 0, scale: 0.98 }}
@@ -714,246 +488,176 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
                     className={`rounded-xl bg-white border transition-all shadow-2xs hover:shadow-xs relative overflow-hidden flex flex-col justify-center px-2.5 py-2 sm:px-4 sm:py-2.5 ${
                       hasObs
                         ? 'border-[#F4901E] ring-1 ring-[#F4901E]/35 bg-amber-50/10'
-                        : viewMode === 'dia_anterior'
-                        ? temAulaHoje
-                          ? 'border-blue-300 bg-blue-50/10'
-                          : 'border-[#CBD5E1]'
                         : isEmAulaHoje
-                        ? 'border-red-200'
-                        : isLivreHoje
-                        ? 'border-emerald-200'
+                        ? 'border-red-200 bg-red-50/10'
+                        : temAulaHoje
+                        ? 'border-blue-300 bg-blue-50/10'
                         : 'border-[#CBD5E1]'
                     }`}
                   >
-                    {/* Borda lateral colorida fina indicando o status */}
+                    {/* Borda lateral indicadora de cor */}
                     <div
                       className={`absolute top-0 bottom-0 left-0 w-1.5 sm:w-2 ${
                         hasObs
                           ? 'bg-[#F4901E]'
-                          : viewMode === 'dia_anterior'
-                          ? temAulaHoje
-                            ? 'bg-[#1D4E8C]'
-                            : 'bg-emerald-500'
                           : isEmAulaHoje
                           ? 'bg-red-500'
-                          : isLivreHoje
-                          ? 'bg-emerald-500'
-                          : isConcluidoHoje
+                          : temAulaHoje
                           ? 'bg-[#1D4E8C]'
-                          : 'bg-slate-300'
+                          : 'bg-emerald-500'
                       }`}
                     />
 
                     <div className="pl-1.5 sm:pl-2 flex flex-col gap-1">
-                      {/* LINHA 1 (No Desktop divide em 3 colunas; No Mobile divide entre Sala e Status) */}
+                      {/* LINHA PRINCIPAL: Sala + Situação + Horários */}
                       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-1.5 lg:gap-3">
                         
-                        {/* COLUNA 1: NOME DA SALA EM DESTAQUE (SEM NOMES LONGOS / SUBNOMES) */}
-                        <div className="flex items-center justify-between lg:justify-start gap-2 min-w-0 lg:w-[280px] xl:w-[320px] shrink-0">
-                          <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                            <span
-                              title={room.sala}
-                              className="text-xs sm:text-sm font-black uppercase text-[#0F2A52] tracking-tight bg-[#EEF2F6] border border-[#CBD5E1] px-2 py-0.5 rounded-md shrink-0 shadow-2xs"
-                            >
-                              {room.nomeCurto}
-                            </span>
-                          </div>
+                        {/* COLUNA 1: NOME DA SALA EM DESTAQUE (SEM SUB-NOMES) */}
+                        <div className="flex items-center justify-between lg:justify-start gap-2 min-w-0 lg:w-[260px] xl:w-[300px] shrink-0">
+                          <span
+                            title={room.sala}
+                            className="text-xs sm:text-sm font-black uppercase text-[#0F2A52] tracking-tight bg-[#EEF2F6] border border-[#CBD5E1] px-2 py-0.5 rounded-md shrink-0 shadow-2xs"
+                          >
+                            {room.nomeCurto}
+                          </span>
 
-                          {/* Badge de Status no Mobile (alinhado à direita na Linha 1) */}
+                          {/* Badge de Status no Mobile (ao lado do nome) */}
                           <div className="shrink-0 lg:hidden">
-                            {viewMode === 'dia_anterior' ? (
-                              temAulaHoje ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-900 border border-blue-200">
-                                  <Clock className="w-2.5 h-2.5 text-[#1D4E8C]" />
-                                  Hoje às {room.classesHoje[0].inicio}
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                  <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
-                                  Livre Hoje
-                                </span>
-                              )
+                            {isEmAulaHoje ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-100 text-red-800 border border-red-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                                Em Aula
+                              </span>
+                            ) : temAulaHoje ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-900 border border-blue-200">
+                                <Clock className="w-2.5 h-2.5 text-[#1D4E8C]" />
+                                Hoje às {room.classesHoje[0].inicio}
+                              </span>
                             ) : (
-                              <>
-                                {isEmAulaHoje && (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-100 text-red-800 border border-red-200">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                                    Em Aula
-                                  </span>
-                                )}
-                                {isLivreHoje && (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                    Livre
-                                  </span>
-                                )}
-                                {isConcluidoHoje && (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-800 border border-blue-200">
-                                    Concluído
-                                  </span>
-                                )}
-                                {room.statusHoje === 'sem_aula' && (
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200">
-                                    Sem Aula
-                                  </span>
-                                )}
-                              </>
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                Livre Hoje
+                              </span>
                             )}
                           </div>
                         </div>
 
-                        {/* COLUNA 2: STATUS & INFORMATIVO OPERACIONAL (DIRETO E SEM TURMAS) */}
+                        {/* COLUNA 2: SITUAÇÃO DE LIMPEZA & HIGIENIZAÇÃO */}
                         <div className="flex items-center gap-2 lg:w-[340px] xl:w-[400px] shrink-0 min-w-0">
                           {/* Badge de Status no Desktop */}
                           <div className="hidden lg:block shrink-0">
-                            {viewMode === 'dia_anterior' ? (
-                              temAulaHoje ? (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-900 border border-blue-200">
-                                  <Clock className="w-2.5 h-2.5 text-[#1D4E8C]" />
-                                  Hoje às {room.classesHoje[0].inicio}
-                                </span>
-                              ) : (
-                                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                  <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
-                                  Livre Hoje
-                                </span>
-                              )
+                            {isEmAulaHoje ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-100 text-red-800 border border-red-200">
+                                <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
+                                Em Aula
+                              </span>
+                            ) : temAulaHoje ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-900 border border-blue-200">
+                                <Clock className="w-2.5 h-2.5 text-[#1D4E8C]" />
+                                Hoje às {room.classesHoje[0].inicio}
+                              </span>
                             ) : (
-                              <>
-                                {isEmAulaHoje && (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-red-100 text-red-800 border border-red-200">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse" />
-                                    Em Aula
-                                  </span>
-                                )}
-                                {isLivreHoje && (
-                                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                    <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
-                                    Livre
-                                  </span>
-                                )}
-                                {isConcluidoHoje && (
-                                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-blue-100 text-blue-800 border border-blue-200">
-                                    Concluído
-                                  </span>
-                                )}
-                                {room.statusHoje === 'sem_aula' && (
-                                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold text-slate-500 bg-slate-100 border border-slate-200">
-                                    Sem Aula
-                                  </span>
-                                )}
-                              </>
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black uppercase bg-emerald-100 text-emerald-800 border border-emerald-200">
+                                <CheckCircle2 className="w-2.5 h-2.5 text-emerald-600" />
+                                Livre Hoje
+                              </span>
                             )}
                           </div>
 
-                          {/* Texto de apoio operacional conciso (SEM TURMA!) */}
+                          {/* Texto explicativo operacional (SEM CÓDIGO DE TURMAS) */}
                           <div className="min-w-0 flex-1 truncate text-[11px] leading-tight">
-                            {viewMode === 'dia_anterior' ? (
-                              temAulaHoje ? (
+                            {isEmAulaHoje ? (
+                              <span className="text-red-800 font-bold">
+                                Ocupada até às <strong>{room.currentClassHoje?.fim}</strong>
+                                {foiUsadaOntem && ' • Foi usada ontem'}
+                              </span>
+                            ) : temAulaHoje ? (
+                              foiUsadaOntem ? (
                                 <span className="text-[#1D4E8C] font-bold">
-                                  Prioridade: aula hoje às <strong>{room.classesHoje[0].inicio}</strong>
+                                  Usada ontem • Prioridade: aula hoje às <strong>{room.classesHoje[0].inicio}</strong>
                                 </span>
                               ) : (
-                                <span className="text-emerald-800 font-bold">
-                                  Sem aulas hoje • Liberada para limpeza geral
+                                <span className="text-[#1D4E8C] font-medium">
+                                  Não usada ontem • Primeira aula hoje às <strong>{room.classesHoje[0].inicio}</strong>
                                 </span>
                               )
                             ) : (
-                              <>
-                                {isEmAulaHoje && (
-                                  <span className="text-red-800 font-bold">
-                                    Ocupada até as <strong>{room.currentClassHoje?.fim}</strong>
-                                  </span>
-                                )}
-                                {isLivreHoje && (
-                                  <span className="text-emerald-800 font-bold">
-                                    {room.nextClassHoje ? (
-                                      <span>Liberada até as <strong>{room.nextClassHoje.inicio}</strong></span>
-                                    ) : (
-                                      <span>Liberada para higienização • Sem mais aulas hoje</span>
-                                    )}
-                                  </span>
-                                )}
-                                {isConcluidoHoje && (
-                                  <span className="text-[#1D4E8C] font-semibold">
-                                    Aulas encerradas hoje • Pronto p/ limpeza
-                                  </span>
-                                )}
-                                {room.statusHoje === 'sem_aula' && (
-                                  <span className="text-slate-400 font-normal italic">
-                                    Sem atividades agendadas hoje
-                                  </span>
-                                )}
-                              </>
+                              foiUsadaOntem ? (
+                                <span className="text-emerald-800 font-bold">
+                                  Usada ontem • Liberada para limpeza geral o dia todo
+                                </span>
+                              ) : (
+                                <span className="text-slate-500 font-normal">
+                                  Sem aulas ontem e hoje • Ambiente liberado
+                                </span>
+                              )
                             )}
                           </div>
                         </div>
 
-                        {/* COLUNA 3: CHIPS DE HORÁRIOS COMPACTOS (SEM CÓDIGOS DE TURMA!) */}
+                        {/* COLUNA 3: CHIPS DE HORÁRIOS COMPACTOS (ONTEM & HOJE, SEM TURMAS) */}
                         <div className="flex-1 min-w-0">
-                          {viewMode === 'dia_anterior' ? (
-                            room.classesOntem.length === 0 ? (
-                              <span className="text-[10px] text-slate-400 italic">
-                                Sem registros de uso ontem
+                          <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5 flex-nowrap">
+                            {/* Chips de ontem */}
+                            {room.classesOntem.map((cls, classIdx) => (
+                              <span
+                                key={`ontem-${classIdx}`}
+                                title={`Uso ontem (${previousDayDisplay}): ${cls.inicio} às ${cls.fim}`}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono whitespace-nowrap border bg-slate-50 text-slate-700 border-slate-300 font-medium shrink-0"
+                              >
+                                <Clock className="w-2.5 h-2.5 text-slate-400" />
+                                <span className="font-sans text-[8px] uppercase font-bold text-slate-600 bg-slate-200 px-1 rounded-xs">
+                                  Ontem
+                                </span>
+                                <span>{cls.inicio}–{cls.fim}</span>
+                                <span className="font-sans text-[8px] uppercase font-bold text-slate-600">
+                                  [{cls.turno[0]}]
+                                </span>
                               </span>
-                            ) : (
-                              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
-                                {room.classesOntem.map((cls, classIdx) => (
-                                  <span
-                                    key={classIdx}
-                                    className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono whitespace-nowrap border bg-[#F8FAFC] text-[#0F2A52] border-[#CBD5E1] font-semibold"
-                                  >
-                                    <Clock className="w-2.5 h-2.5 text-[#F4901E]" />
-                                    <span>{cls.inicio}–{cls.fim}</span>
-                                    <span className="font-sans text-[8px] uppercase font-bold text-[#1D4E8C] bg-[#DBEAFE] px-1 rounded-xs">
-                                      {cls.turno[0]}
-                                    </span>
-                                  </span>
-                                ))}
-                              </div>
-                            )
-                          ) : (
-                            room.classesHoje.length === 0 ? (
-                              <span className="text-[10px] text-slate-400 italic hidden lg:inline">
-                                Nenhuma aula agendada
-                              </span>
-                            ) : (
-                              <div className="flex items-center gap-1 overflow-x-auto no-scrollbar py-0.5">
-                                {room.classesHoje.map((cls, classIdx) => {
-                                  const isCurrent = currentMinutes >= cls.startMinutes && currentMinutes < cls.endMinutes;
-                                  const isPast = currentMinutes >= cls.endMinutes;
+                            ))}
 
-                                  return (
-                                    <span
-                                      key={classIdx}
-                                      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono whitespace-nowrap border ${
-                                        isCurrent
-                                          ? 'bg-red-100 text-red-900 border-red-300 font-bold ring-1 ring-red-400'
-                                          : isPast
-                                          ? 'bg-slate-50 text-slate-400 border-slate-200'
-                                          : 'bg-[#F8FAFC] text-[#0F2A52] border-[#CBD5E1] font-semibold'
-                                      }`}
-                                    >
-                                      <Clock className={`w-2.5 h-2.5 ${isCurrent ? 'text-red-500' : 'text-[#F4901E]'}`} />
-                                      <span>{cls.inicio}–{cls.fim}</span>
-                                      <span className="font-sans text-[8px] uppercase font-bold text-[#1D4E8C] bg-[#DBEAFE] px-1 rounded-xs">
-                                        {cls.turno[0]}
-                                      </span>
-                                      {isCurrent && (
-                                        <span className="font-sans text-[8px] uppercase font-black text-red-600 animate-pulse">
-                                          Agora
-                                        </span>
-                                      )}
+                            {/* Chips de hoje */}
+                            {room.classesHoje.map((cls, classIdx) => {
+                              const isCurrent = currentMinutes >= cls.startMinutes && currentMinutes < cls.endMinutes;
+                              return (
+                                <span
+                                  key={`hoje-${classIdx}`}
+                                  title={`Aula hoje (${todayStr}): ${cls.inicio} às ${cls.fim}`}
+                                  className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-mono whitespace-nowrap border shrink-0 ${
+                                    isCurrent
+                                      ? 'bg-red-100 text-red-900 border-red-300 font-bold ring-1 ring-red-400'
+                                      : 'bg-blue-50 text-[#0F2A52] border-blue-200 font-medium'
+                                  }`}
+                                >
+                                  <Clock className={`w-2.5 h-2.5 ${isCurrent ? 'text-red-500' : 'text-[#1D4E8C]'}`} />
+                                  <span className={`font-sans text-[8px] uppercase font-bold px-1 rounded-xs ${
+                                    isCurrent ? 'bg-red-500 text-white' : 'bg-[#1D4E8C] text-white'
+                                  }`}>
+                                    Hoje
+                                  </span>
+                                  <span>{cls.inicio}–{cls.fim}</span>
+                                  <span className="font-sans text-[8px] uppercase font-bold text-[#1D4E8C]">
+                                    [{cls.turno[0]}]
+                                  </span>
+                                  {isCurrent && (
+                                    <span className="font-sans text-[8px] uppercase font-black text-red-600 animate-pulse">
+                                      Agora
                                     </span>
-                                  );
-                                })}
-                              </div>
-                            )
-                          )}
+                                  )}
+                                </span>
+                              );
+                            })}
+
+                            {room.classesOntem.length === 0 && room.classesHoje.length === 0 && (
+                              <span className="text-[10px] text-slate-400 italic">
+                                Sem registros de horários
+                              </span>
+                            )}
+                          </div>
                         </div>
                       </div>
 
-                      {/* LINHA DE AVISO DA GESTÃO (APENAS SE HOUVER OBSERVAÇÃO) */}
+                      {/* LINHA DE AVISO DA GESTÃO (SE HOUVER OBSERVAÇÃO) */}
                       {hasObs && (
                         <div className="mt-0.5 px-2 py-0.5 rounded-md bg-amber-50 border border-amber-300 flex items-center gap-1.5 text-[10px] text-amber-950 font-bold shadow-2xs">
                           <AlertTriangle className="w-3 h-3 text-[#F4901E] shrink-0" />
