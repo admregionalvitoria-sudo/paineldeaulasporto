@@ -60,6 +60,51 @@ const getHorarioFixo = (turno: string | undefined) => {
     return '';
 };
 
+const normalizarHora = (h?: string): string => {
+    if (!h) return '';
+    const clean = h.trim().toLowerCase().replace(/h/g, ':').replace(/[^0-9:]/g, '');
+    if (!clean) return '';
+    const parts = clean.split(':');
+    if (parts.length >= 2) {
+        const hours = parts[0].padStart(2, '0');
+        const mins = (parts[1] || '00').padEnd(2, '0').slice(0, 2);
+        return `${hours}:${mins}`;
+    }
+    if (parts.length === 1 && parts[0]) {
+        return `${parts[0].padStart(2, '0')}:00`;
+    }
+    return clean;
+};
+
+const formatarHorarioAula = (aula: Aula): string => {
+    const ini = normalizarHora(aula.inicio);
+    let fim = normalizarHora(aula.fim);
+
+    if (ini) {
+        if (!fim) {
+            const t = normalizeTurno(aula.turno);
+            if (t === 'vespertino') fim = '17:30';
+            else if (t === 'noturno') fim = '22:00';
+            else if (t === 'matutino') fim = '11:30';
+            else fim = '17:30';
+        }
+        return `${ini} — ${fim}`;
+    }
+
+    return getHorarioFixo(aula.turno);
+};
+
+const getDynamicUcTextClass = (uc: string): string => {
+    const len = (uc || '').length;
+    if (len > 36) {
+        return 'text-[10px] md:text-[11px] xl:text-xs leading-tight tracking-tight';
+    }
+    if (len > 24) {
+        return 'text-[11px] md:text-xs xl:text-[13px] leading-snug tracking-tight';
+    }
+    return 'text-xs md:text-sm xl:text-[14px] leading-snug';
+};
+
 const isDirectVideo = (url: string) => 
     /\.(mp4|webm|ogg|mov)$/i.test(url) || 
     url.includes('video-stream') || 
@@ -154,12 +199,17 @@ const ClassCard: React.FC<{ aula: Aula; index: number; compact?: boolean }> = ({
 
                 <div className="flex items-center gap-2 text-[#4B5563]">
                     <BookOpenIcon className="w-3.5 h-3.5 text-[#1D4E8C] flex-shrink-0" />
-                    <span className="font-bold uppercase truncate">{formatarUnidadeCurricular(aula.unidade_curricular)}</span>
+                    <span 
+                        className={`font-bold uppercase leading-snug break-words ${getDynamicUcTextClass(formatarUnidadeCurricular(aula.unidade_curricular))}`}
+                        title={formatarUnidadeCurricular(aula.unidade_curricular)}
+                    >
+                        {formatarUnidadeCurricular(aula.unidade_curricular)}
+                    </span>
                 </div>
 
                 <div className="flex items-center gap-2 text-[#0F2A52] pt-1 border-t border-[#E2E8F0]/70">
                     <ClockIcon className="w-3.5 h-3.5 text-[#F4901E] flex-shrink-0" />
-                    <span className="font-black text-[10px] tracking-wide">{getHorarioFixo(aula.turno)}</span>
+                    <span className="font-black text-[10px] tracking-wide">{formatarHorarioAula(aula)}</span>
                 </div>
             </div>
         </motion.div>
@@ -567,14 +617,14 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
                         <div className="rounded-[1.9rem] lg:rounded-[2.4rem] w-full h-full bg-white flex flex-col overflow-hidden custom-scrollbar overflow-y-auto">
                             {displayAulas.length > 0 ? (
                                 <div className="w-full">
-                                    <table className="w-full text-left border-collapse">
+                                    <table className="w-full text-left border-collapse table-auto md:table-fixed">
                                         <thead className="sticky top-0 z-10 shadow-sm">
                                             <tr className="bg-[#0F2A52] text-white text-xs md:text-sm font-black uppercase tracking-[0.2em] border-b-2 border-[#0F2A52]">
-                                                <th className="py-3.5 lg:py-4 px-5 lg:px-7">Turma</th>
-                                                <th className="py-3.5 lg:py-4 px-5 lg:px-7">Ambiente / Sala</th>
-                                                <th className="py-3.5 lg:py-4 px-5 lg:px-7">Instrutor</th>
-                                                <th className="py-3.5 lg:py-4 px-5 lg:px-7">Unidade Curricular</th>
-                                                <th className="py-3.5 lg:py-4 px-5 lg:px-7">Horário</th>
+                                                <th className="py-3.5 lg:py-4 px-3.5 lg:px-5 w-[14%]">Turma</th>
+                                                <th className="py-3.5 lg:py-4 px-3.5 lg:px-5 w-[27%]">Ambiente / Sala</th>
+                                                <th className="py-3.5 lg:py-4 px-3.5 lg:px-5 w-[20%]">Instrutor</th>
+                                                <th className="py-3.5 lg:py-4 px-3.5 lg:px-5 w-[26%]">Unidade Curricular</th>
+                                                <th className="py-3.5 lg:py-4 px-3.5 lg:px-5 w-[13%]">Horário</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-[#E2E8F0]">
@@ -586,31 +636,36 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
                                                     transition={{ delay: idx * 0.02, duration: 0.3 }}
                                                     className="hover:bg-[#F8FAFC] transition-colors duration-200"
                                                 >
-                                                    <td className="py-3.5 lg:py-4 px-5 lg:px-7 font-black text-[#0F2A52] text-base md:text-lg tracking-tight uppercase">
+                                                    <td className="py-3.5 lg:py-4 px-3.5 lg:px-5 font-black text-[#0F2A52] text-base md:text-lg tracking-tight uppercase">
                                                         <span>{formatText(aula.turma)}</span>
                                                     </td>
-                                                    <td className="py-3.5 lg:py-4 px-5 lg:px-7 text-sm md:text-base font-black uppercase text-[#F4901E] tracking-wider">
+                                                    <td className="py-3.5 lg:py-4 px-3.5 lg:px-5 text-sm md:text-base font-black uppercase text-[#F4901E] tracking-wider">
                                                         <div className="flex items-center gap-2">
-                                                            <ClockIcon className="w-4 h-4 text-[#F4901E]" />
-                                                            <span>{abrevSala(aula.sala)}</span>
+                                                            <ClockIcon className="w-4 h-4 text-[#F4901E] flex-shrink-0" />
+                                                            <span className="truncate">{abrevSala(aula.sala)}</span>
                                                         </div>
                                                     </td>
-                                                    <td className="py-3.5 lg:py-4 px-5 lg:px-7 text-xs md:text-sm font-bold text-[#374151] uppercase">
+                                                    <td className="py-3.5 lg:py-4 px-3.5 lg:px-5 text-xs md:text-sm font-bold text-[#374151] uppercase">
                                                         <div className="flex items-center gap-2">
-                                                            <UserTieIcon className="w-4 h-4 text-[#1D4E8C]" />
-                                                            <span>{formatText(aula.instrutor)}</span>
+                                                            <UserTieIcon className="w-4 h-4 text-[#1D4E8C] flex-shrink-0" />
+                                                            <span className="truncate">{formatText(aula.instrutor)}</span>
                                                         </div>
                                                     </td>
-                                                    <td className="py-3.5 lg:py-4 px-5 lg:px-7 text-xs md:text-sm font-bold text-[#374151] uppercase">
-                                                        <div className="flex items-center gap-2">
+                                                    <td className="py-3.5 lg:py-4 px-3.5 lg:px-5 text-[#374151] uppercase">
+                                                        <div className="flex items-center gap-2 max-w-full">
                                                             <BookOpenIcon className="w-4 h-4 text-[#1D4E8C] flex-shrink-0" />
-                                                            <span className="leading-snug">{formatarUnidadeCurricular(aula.unidade_curricular)}</span>
+                                                            <span 
+                                                                className={`font-bold uppercase break-words ${getDynamicUcTextClass(formatarUnidadeCurricular(aula.unidade_curricular))}`}
+                                                                title={formatarUnidadeCurricular(aula.unidade_curricular)}
+                                                            >
+                                                                {formatarUnidadeCurricular(aula.unidade_curricular)}
+                                                            </span>
                                                         </div>
                                                     </td>
-                                                    <td className="py-3.5 lg:py-4 px-5 lg:px-7 text-xs md:text-sm font-black text-[#0F2A52] tracking-wider">
+                                                    <td className="py-3.5 lg:py-4 px-3.5 lg:px-5 text-xs md:text-sm font-black text-[#0F2A52] tracking-wider whitespace-nowrap">
                                                         <div className="flex items-center gap-2">
-                                                            <ClockIcon className="w-4 h-4 text-[#F4901E]" />
-                                                            <span>{getHorarioFixo(aula.turno)}</span>
+                                                            <ClockIcon className="w-4 h-4 text-[#F4901E] flex-shrink-0" />
+                                                            <span>{formatarHorarioAula(aula)}</span>
                                                         </div>
                                                     </td>
                                                 </motion.tr>

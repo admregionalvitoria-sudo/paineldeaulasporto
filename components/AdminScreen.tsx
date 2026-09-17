@@ -1457,7 +1457,9 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
                         {aula.turma}
                       </td>
                       <td className="py-3 px-4 text-[#475569]">{aula.instrutor}</td>
-                      <td className="py-3 px-4 text-[#64748B] max-w-[220px] truncate">{aula.unidade_curricular || '—'}</td>
+                      <td className="py-3 px-4 text-[#64748B] max-w-[220px] truncate" title={aula.unidade_curricular ? formatarUnidadeCurricular(aula.unidade_curricular) : '—'}>
+                        {aula.unidade_curricular ? formatarUnidadeCurricular(aula.unidade_curricular) : '—'}
+                      </td>
                       <td className="py-3 px-4 text-[#0F2A52] font-mono text-[11px]">{aula.data}</td>
                       <td className="py-3 px-4 font-bold text-[#0F2A52]">
                         <div>{aula.inicio} {aula.fim ? `- ${aula.fim}` : ''}</div>
