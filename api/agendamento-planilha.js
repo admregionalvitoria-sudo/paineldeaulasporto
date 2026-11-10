@@ -19,7 +19,7 @@ export default async function handler(req, res) {
     await referencia.update({ planilhaSyncErro: null, planilhaSyncEm: admin.firestore.FieldValue.serverTimestamp() });
     return res.status(200).json({ success: true });
   } catch (erro) {
-    const mensagem = erro.message === 'Credencial Google Sheets não configurada' || /^Google Sheets: HTTP \d+$/.test(erro.message) ? erro.message : 'Falha ao sincronizar com Google Sheets';
+    const mensagem = ['Credencial Google Sheets não configurada', 'Cabeçalho da planilha diferente do esperado'].includes(erro.message) || /^Google Sheets: HTTP \d+$/.test(erro.message) ? erro.message : 'Falha ao sincronizar com Google Sheets';
     if (referencia) await referencia.update({ planilhaSyncErro: mensagem, planilhaSyncEm: admin.firestore.FieldValue.serverTimestamp() }).catch(() => {});
     return res.status(500).json({ error: mensagem });
   }

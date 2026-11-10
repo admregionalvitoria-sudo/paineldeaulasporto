@@ -6,7 +6,7 @@ import type { Aula, AgendamentoSala, ManutencaoAmbiente } from '../types';
 
 const manutencao: ManutencaoAmbiente = { id: 'm', sala: ' Sala  1 ', motivo: 'Reforma', inicio: '30/10/2026', fim: '10/11/2026', ativo: true, criadoPor: 'Gestor' };
 const aula: Aula = { id: 'a', sala: 'Sala 1', data: '10/11/2026', inicio: '18:30', fim: '19:20', turno: 'Noturno', turma: 'T', instrutor: 'I', unidade_curricular: 'UC' };
-const reserva: AgendamentoSala = { id: 'r', sala: 'Sala 1', data: aula.data, turno: 'Noturno', status: 'aprovado', solicitante: 'Professor' };
+const reserva: AgendamentoSala = { id: 'r', sala: 'Sala 1', data: aula.data, turno: 'Noturno', status: 'aprovado', solicitante: 'Professor', emailSolicitante: 'professor@senai.com.br', notificarWhatsapp: false };
 
 describe('manutenção', () => {
   it('tem prioridade sobre aula, reserva e pendência na disponibilidade', () => {

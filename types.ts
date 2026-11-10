@@ -46,7 +46,10 @@ export interface AgendamentoSala {
   horarioInicio?: string;
   horarioFim?: string;
   solicitante: string;
-  emailSolicitante?: string;
+  emailSolicitante: string;
+  notificarWhatsapp: boolean;
+  consentimentoWhatsappEm?: string;
+  consentimentoWhatsappTexto?: string;
   canalNotificacao?: 'whatsapp' | 'email';
   telefoneSolicitante?: string;
   observacaoDecisao?: string;

@@ -4,7 +4,7 @@ import { DataContext } from '../context/DataContext';
 import useCurrentTime from '../hooks/useCurrentTime';
 import { formatarUnidadeCurricular, CANONICAL_UNIDADES_CURRICULARES } from '../utils/curricularUnits';
 import { estaEmManutencao } from '../utils/ambientes';
-import { mascaraTelefone, normalizarTelefone, emailValido } from '../utils/notificacaoAgendamento.mjs';
+import { mascaraTelefone, normalizarTelefone, validarContatoAgendamento } from '../utils/notificacaoAgendamento.mjs';
 import { formatarNomeSala } from '../utils/roomFormatter';
 import {
     BuildingIcon,
@@ -88,7 +88,8 @@ const AgendamentoModal: React.FC<{
     const [data, setData] = useState(initialData || formatDateToBR(new Date()));
     const [turno, setTurno] = useState(defaultTurno);
     const [solicitante, setSolicitante] = useState('');
-    const [canalNotificacao, setCanalNotificacao] = useState<'whatsapp' | 'email'>('whatsapp');
+    const [notificarWhatsapp, setNotificarWhatsapp] = useState(false);
+    const [consentimentoWhatsappEm, setConsentimentoWhatsappEm] = useState('');
     const [telefoneSolicitante, setTelefoneSolicitante] = useState('');
     const [emailSolicitante, setEmailSolicitante] = useState('');
     const [turma, setTurma] = useState('');
@@ -127,8 +128,9 @@ const AgendamentoModal: React.FC<{
             setErrorNotice(`Ambiente em manutenção: ${dispAtual.motivoManutencao}`);
             return;
         }
-        if (canalNotificacao === 'whatsapp' ? !normalizarTelefone(telefoneSolicitante) : !emailValido(emailSolicitante)) {
-            setErrorNotice(canalNotificacao === 'whatsapp' ? 'Informe um telefone com DDD e 10 a 11 dígitos.' : 'Informe um e-mail válido.');
+        const erroContato = validarContatoAgendamento({ emailSolicitante, notificarWhatsapp, telefoneSolicitante, consentimentoWhatsappEm, consentimentoWhatsappTexto: consentimentoWhatsappEm ? 'LGPD-v1' : '' }, import.meta.env.VITE_EMAIL_DOMINIOS_CORPORATIVOS);
+        if (erroContato) {
+            setErrorNotice(erroContato);
             return;
         }
         if (dispAtual.status === 'ocupada_aula') {
@@ -150,9 +152,13 @@ const AgendamentoModal: React.FC<{
                 horarioInicio,
                 horarioFim,
                 solicitante: solicitante.trim(),
-                canalNotificacao,
-                telefoneSolicitante: canalNotificacao === 'whatsapp' ? normalizarTelefone(telefoneSolicitante) : '',
-                emailSolicitante: canalNotificacao === 'email' ? emailSolicitante.trim() : '',
+                emailSolicitante: emailSolicitante.trim(),
+                notificarWhatsapp,
+                ...(notificarWhatsapp ? {
+                    telefoneSolicitante: normalizarTelefone(telefoneSolicitante),
+                    consentimentoWhatsappEm,
+                    consentimentoWhatsappTexto: 'LGPD-v1'
+                } : {}),
                 turma: turma.trim(),
                 disciplina: disciplina.trim(),
                 motivo: motivo.trim()
@@ -225,13 +231,30 @@ const AgendamentoModal: React.FC<{
                 )}
 
                 <form onSubmit={handleSubmit} className="flex flex-col gap-3.5 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
-                    <fieldset className="space-y-2">
-                        <legend className="text-xs font-bold">Receber atualizações por *</legend>
-                        <div className="flex rounded-xl bg-slate-100 p-1" role="group" aria-label="Canal de notificação">
-                            {(['whatsapp', 'email'] as const).map(canal => <button key={canal} type="button" aria-pressed={canalNotificacao === canal} onClick={() => setCanalNotificacao(canal)} className={`flex-1 rounded-lg p-2 text-xs font-bold ${canalNotificacao === canal ? 'bg-[#0F2A52] text-white' : 'text-[#0F2A52]'}`}>{canal === 'whatsapp' ? 'WhatsApp (telefone)' : 'Gmail (e-mail)'}</button>)}
-                        </div>
-                        {canalNotificacao === 'whatsapp' ? <label className="block text-xs">Telefone com DDD *<input type="tel" required placeholder="(27) 99999-9999" value={telefoneSolicitante} onChange={e => setTelefoneSolicitante(mascaraTelefone(e.target.value))} className="w-full border border-slate-300 rounded-xl p-3 mt-1" /></label> : <label className="block text-xs">E-mail *<input type="email" required value={emailSolicitante} onChange={e => setEmailSolicitante(e.target.value)} className="w-full border border-slate-300 rounded-xl p-3 mt-1" /></label>}
-                        <p className="text-xs text-slate-500">Você receberá a confirmação de recebimento e a decisão do gestor (aprovado ou negado com motivo) pelo canal escolhido.</p>
+                    <fieldset className="space-y-3">
+                        <label className="block text-xs font-bold">E-mail corporativo *
+                            <input type="email" required value={emailSolicitante} onChange={e => setEmailSolicitante(e.target.value)} className="w-full border border-slate-300 rounded-xl p-3 mt-1" />
+                        </label>
+                        <p className="text-xs text-slate-500">A aprovação ou recusa da sua solicitação será enviada para este e-mail.</p>
+                        <label className="flex items-start gap-2 text-xs cursor-pointer">
+                            <input type="checkbox" checked={notificarWhatsapp} onChange={e => {
+                                setNotificarWhatsapp(e.target.checked);
+                                if (!e.target.checked) { setTelefoneSolicitante(''); setConsentimentoWhatsappEm(''); }
+                            }} className="mt-0.5 accent-[#0F2A52]" />
+                            Também quero receber notificações pelo WhatsApp
+                        </label>
+                        {notificarWhatsapp && <>
+                            <label className="block text-xs font-bold">WhatsApp (com DDD) *
+                                <input type="tel" required placeholder="(27) 99999-9999" value={telefoneSolicitante} onChange={e => setTelefoneSolicitante(mascaraTelefone(e.target.value))} className="w-full border border-slate-300 rounded-xl p-3 mt-1" />
+                            </label>
+                            <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs leading-relaxed text-[#0F2A52]">
+                                <strong>Consentimento (LGPD – Lei nº 13.709/2018):</strong> Ao informar seu número, você autoriza o SENAI Porto a enviar para o seu WhatsApp pessoal mensagens exclusivamente sobre esta solicitação de agendamento (recebimento, aprovação ou recusa). Seu número será usado apenas para essa finalidade, não será compartilhado com terceiros, e você pode pedir a remoção a qualquer momento junto à coordenação.
+                            </div>
+                            <label className="flex items-start gap-2 text-xs cursor-pointer">
+                                <input type="checkbox" checked={!!consentimentoWhatsappEm} onChange={e => setConsentimentoWhatsappEm(e.target.checked ? new Date().toISOString() : '')} className="mt-0.5 accent-[#0F2A52]" />
+                                Li e autorizo o envio de notificações para o meu WhatsApp pessoal.
+                            </label>
+                        </>}
                     </fieldset>
                     <datalist id="uc-list-agendamento">
                         {CANONICAL_UNIDADES_CURRICULARES.map((uc, i) => (

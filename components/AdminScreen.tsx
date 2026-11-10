@@ -1,3 +1,4 @@
+import { whatsappAutorizado, mascaraTelefone, normalizarTelefone } from '../utils/notificacaoAgendamento.mjs';
 import React, { useState, useContext, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DataContext, ExtendedDataContextType, normalizarNomeAmbiente, calcularTurnoPorHorario } from '../context/DataContext';
@@ -761,8 +762,10 @@ const AgendamentosAdminSection: React.FC = () => {
                 <span className="text-xs text-[#6B7280]">({ag.data} • {ag.turno})</span>
               </div>
               <p className="text-xs text-[#0F2A52]">
-                <span className="font-bold">Solicitante:</span> {ag.solicitante} {ag.emailSolicitante && `(${ag.emailSolicitante})`}
+                <span className="font-bold">Solicitante:</span> {ag.solicitante}
               </p>
+              {ag.emailSolicitante && <p className="text-xs text-[#6B7280]"><span className="font-bold">E-mail:</span> {ag.emailSolicitante}</p>}
+              {whatsappAutorizado(ag) && ag.telefoneSolicitante && <p className="text-xs text-[#6B7280]">WhatsApp autorizado: {mascaraTelefone(normalizarTelefone(ag.telefoneSolicitante).slice(2))}</p>}
               {ag.turma && <p className="text-xs text-[#6B7280]"><span className="font-bold">Turma:</span> {ag.turma}</p>}
               {ag.motivo && <p className="text-xs text-[#6B7280]"><span className="font-bold">Motivo:</span> {ag.motivo}</p>}
               {ag.aprovadoPor && <p className="text-[10px] text-emerald-700 font-bold">Aprovado por: {ag.aprovadoPor}</p>}

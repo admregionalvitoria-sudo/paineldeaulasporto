@@ -1,3 +1,4 @@
+import { validarContatoAgendamento, normalizarTelefone, whatsappAutorizado } from '../utils/notificacaoAgendamento.mjs';
 import React, { createContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { upload as vercelBlobUpload } from '@vercel/blob/client';
 import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType, AuditAction, PainelClienteConfig, ObservacaoLimpeza, ManutencaoAmbiente } from '../types';
@@ -469,6 +470,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           horarioFim: d.horarioFim || '',
           solicitante: d.solicitante || '',
           emailSolicitante: d.emailSolicitante || '',
+          notificarWhatsapp: whatsappAutorizado(d),
+          telefoneSolicitante: d.telefoneSolicitante || '',
+          consentimentoWhatsappEm: d.consentimentoWhatsappEm,
+          consentimentoWhatsappTexto: d.consentimentoWhatsappTexto,
           turma: d.turma || '',
           disciplina: d.disciplina || '',
           motivo: d.motivo || '',
@@ -1130,10 +1135,16 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const solicitarAgendamento = async (dados: Omit<AgendamentoSala, 'id' | 'status' | 'criadoEm'>): Promise<string> => {
     try {
+      const erroContato = validarContatoAgendamento(dados, import.meta.env.VITE_EMAIL_DOMINIOS_CORPORATIVOS);
+      if (erroContato) throw new Error(erroContato);
+      const { canalNotificacao: _canalLegado, telefoneSolicitante, consentimentoWhatsappEm, consentimentoWhatsappTexto, ...dadosSemContato } = dados;
       if (estaEmManutencao(dados.sala, dados.data, manutencoes)) throw new Error('Ambiente em manutenção nesta data.');
       const agendamentosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos');
       const docRef = await addDoc(agendamentosCollectionRef, {
-        ...dados,
+        ...dadosSemContato,
+        emailSolicitante: dados.emailSolicitante.trim(),
+        notificarWhatsapp: dados.notificarWhatsapp === true,
+        ...(dados.notificarWhatsapp ? { telefoneSolicitante: normalizarTelefone(telefoneSolicitante), consentimentoWhatsappEm, consentimentoWhatsappTexto } : {}),
         sala: formatarNomeSala(dados.sala) || dados.sala,
         status: 'pendente',
         criadoEm: serverTimestamp(),
