@@ -6,11 +6,14 @@
 // Ações (todas via POST JSON com o token):
 //   { token, linha: {...} }              -> app de aulas cria/atualiza a linha (colunas A:G)
 //   { token, acao: "listar" }            -> SIA lê as linhas
-//   { token, acao: "marcar", id, status } -> SIA registra que já notificou (colunas H:I)
+//   { token, acao: "marcar", id, status }               -> SIA registra WhatsApp enviado (colunas H:I)
+//   { token, acao: "marcar", id, status, canal: "email" } -> SIA registra e-mail enviado (colunas J:K)
+//   { token, acao: "email", para, assunto, html, texto }   -> SIA pede para enviar o e-mail (sai da conta dona do script)
 
 const TOKEN = 'TROQUE-POR-UMA-SENHA-LONGA-E-SECRETA';
-const CABECALHOS = ['ID', 'Nome', 'Telefone', 'E-mail', 'Status', 'Motivo', 'Sala / Data', 'Notificado', 'Notificado em'];
-const COLUNAS_APP = 7; // A:G pertencem ao app de aulas; H:I à SIA
+const CABECALHOS = ['ID', 'Nome', 'Telefone', 'E-mail', 'Status', 'Motivo', 'Sala / Data',
+  'Notificado', 'Notificado em', 'E-mail notificado', 'E-mail notificado em'];
+const COLUNAS_APP = 7; // A:G pertencem ao app de aulas; H:K à SIA
 
 function aba_() {
   return SpreadsheetApp.getActiveSpreadsheet().getSheets()[0];
@@ -37,10 +40,11 @@ function doPost(e) {
     if (dados.token !== TOKEN) return resposta_({ ok: false, erro: 'Não autorizado' });
 
     const aba = aba_();
-    if (aba.getLastRow() === 0 || aba.getRange(1, 8).getDisplayValue() !== 'Notificado') configurarPlanilha();
+    if (aba.getLastRow() === 0 || aba.getRange(1, 10).getDisplayValue() !== 'E-mail notificado') configurarPlanilha();
 
+    if (dados.acao === 'email') return enviarEmail_(dados);
     if (dados.acao === 'listar') return listar_(aba);
-    if (dados.acao === 'marcar') return marcar_(aba, String(dados.id || ''), String(dados.status || ''));
+    if (dados.acao === 'marcar') return marcar_(aba, String(dados.id || ''), String(dados.status || ''), String(dados.canal || 'whatsapp'));
     return gravar_(aba, dados.linha || {});
   } catch (err) {
     return resposta_({ ok: false, erro: String(err) });
@@ -82,14 +86,37 @@ function listar_(aba) {
   return resposta_({ ok: true, linhas: linhas });
 }
 
-// SIA: marca que o status atual já foi notificado
-function marcar_(aba, id, status) {
+// SIA: marca que o status atual já foi notificado (WhatsApp em H:I, e-mail em J:K)
+function marcar_(aba, id, status, canal) {
   if (!id || !status) return resposta_({ ok: false, erro: 'id e status obrigatórios' });
+  if (canal !== 'whatsapp' && canal !== 'email') return resposta_({ ok: false, erro: 'canal inválido' });
   const numeroLinha = posicaoDoId_(aba, id);
   if (numeroLinha < 0) return resposta_({ ok: false, erro: 'ID não encontrado' });
   const agora = Utilities.formatDate(new Date(), 'America/Sao_Paulo', 'dd/MM/yyyy HH:mm');
-  aba.getRange(numeroLinha, 8, 1, 2).setNumberFormat('@').setValues([[status, agora]]);
+  const coluna = canal === 'email' ? 10 : 8;
+  aba.getRange(numeroLinha, coluna, 1, 2).setNumberFormat('@').setValues([[status, agora]]);
   return resposta_({ ok: true, linha: numeroLinha });
+}
+
+// SIA: envia o e-mail de notificação pela conta Google dona do script
+function enviarEmail_(dados) {
+  const para = String(dados.para || '').trim();
+  if (!/^[^\s@,;]+@[^\s@,;]+\.[^\s@,;]+$/.test(para)) return resposta_({ ok: false, erro: 'e-mail inválido' });
+  if (!dados.assunto || !(dados.html || dados.texto)) return resposta_({ ok: false, erro: 'assunto e conteúdo obrigatórios' });
+  if (MailApp.getRemainingDailyQuota() < 1) return resposta_({ ok: false, erro: 'cota diária de e-mail esgotada' });
+  MailApp.sendEmail({
+    to: para,
+    subject: String(dados.assunto),
+    htmlBody: String(dados.html || ''),
+    body: String(dados.texto || ''),
+    name: 'SENAI Porto'
+  });
+  return resposta_({ ok: true, cotaRestante: MailApp.getRemainingDailyQuota() });
+}
+
+// Rode uma vez no editor para autorizar o envio de e-mail (pede permissão do Google)
+function autorizarEmail() {
+  Logger.log('Cota diária restante: ' + MailApp.getRemainingDailyQuota());
 }
 
 function resposta_(obj) {
