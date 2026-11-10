@@ -1,11 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({ get: vi.fn(), update: vi.fn(), enviar: vi.fn(), rest: vi.fn() }));
-vi.mock('firebase-admin', () => ({ default: {
+vi.mock('firebase-admin', () => ({ default: { default: {
   apps: [{}],
   firestore: Object.assign(() => ({ doc: () => ({ get: mocks.get, update: mocks.update }) }),
     { FieldValue: { serverTimestamp: () => 'timestamp' } })
-} }));
+} } }));
 vi.mock('../lib/agendamentoSheets.mjs', () => ({ enviarParaPlanilha: mocks.enviar }));
 vi.mock('../lib/agendamentoFirestore.mjs', async importOriginal => ({
   ...await importOriginal<typeof import('../lib/agendamentoFirestore.mjs')>(), lerAgendamentoRest: mocks.rest
@@ -41,13 +41,25 @@ describe('endpoint da planilha', () => {
     expect(mocks.update).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
   });
-  it('não usa fallback por erro de permissão', async () => {
-    mocks.get.mockRejectedValue(new Error('PERMISSION_DENIED'));
+  it.each(['PERMISSION_DENIED', 'Erro genérico de leitura'])('usa REST sem atualizar com Admin após %s', async mensagem => {
+    mocks.get.mockRejectedValue(new Error(mensagem));
+    mocks.rest.mockResolvedValue({ solicitante: 'Via REST' });
     const res = resposta();
     await handler({ method: 'POST', body: { agendamentoId: 'abc' } }, res);
-    expect(mocks.rest).not.toHaveBeenCalled();
-    expect(mocks.enviar).not.toHaveBeenCalled();
+    expect(mocks.rest).toHaveBeenCalledWith('abc');
+    expect(mocks.enviar).toHaveBeenCalledWith('abc', { solicitante: 'Via REST' });
+    expect(mocks.update).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+  it('não registra diagnóstico com Admin quando o envio falha após fallback', async () => {
+    mocks.get.mockRejectedValue(new Error('Erro genérico de leitura'));
+    mocks.rest.mockResolvedValue({ solicitante: 'Via REST' });
+    mocks.enviar.mockRejectedValue(new Error('Planilha: Token inválido'));
+    const res = resposta();
+    await handler({ method: 'POST', body: { agendamentoId: 'abc' } }, res);
+    expect(mocks.update).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(500);
+    expect(res.json).toHaveBeenCalledWith({ error: 'Planilha: Token inválido' });
   });
   it('repassa e registra o diagnóstico do Web App', async () => {
     const mensagem = 'Planilha: Token inválido';

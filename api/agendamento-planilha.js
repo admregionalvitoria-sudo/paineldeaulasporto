@@ -1,6 +1,8 @@
 import admin from 'firebase-admin';
 import { enviarParaPlanilha } from '../lib/agendamentoSheets.mjs';
-import { erroDeCredencial, lerAgendamentoRest } from '../lib/agendamentoFirestore.mjs';
+import { lerAgendamentoRest } from '../lib/agendamentoFirestore.mjs';
+
+const firebaseAdmin = admin.default || admin;
 
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*');
@@ -14,22 +16,21 @@ export default async function handler(req, res) {
   try {
     let agendamento;
     try {
-      if (!admin.apps.length) admin.initializeApp({ ...(process.env.FIREBASE_SERVICE_ACCOUNT_KEY ? { credential: admin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY)) } : {}), projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'paineldeaulas-e34da' });
-      referencia = admin.firestore().doc(`porto/dados/agendamentos/${id}`);
+      if (!firebaseAdmin.apps.length) firebaseAdmin.initializeApp({ ...(process.env.FIREBASE_SERVICE_ACCOUNT_KEY ? { credential: firebaseAdmin.credential.cert(JSON.parse(process.env.FIREBASE_SERVICE_ACCOUNT_KEY)) } : {}), projectId: process.env.VITE_FIREBASE_PROJECT_ID || 'paineldeaulas-e34da' });
+      referencia = firebaseAdmin.firestore().doc(`porto/dados/agendamentos/${id}`);
       const documento = await referencia.get();
       agendamento = documento.exists ? documento.data() : null;
-    } catch (erro) {
-      if (!erroDeCredencial(erro)) throw erro;
+    } catch {
       referencia = undefined;
       agendamento = await lerAgendamentoRest(id);
     }
     if (!agendamento) return res.status(404).json({ error: 'Agendamento não encontrado' });
     await enviarParaPlanilha(id, agendamento);
-    if (referencia) await referencia.update({ planilhaSyncErro: null, planilhaSyncEm: admin.firestore.FieldValue.serverTimestamp() });
+    if (referencia) await referencia.update({ planilhaSyncErro: null, planilhaSyncEm: firebaseAdmin.firestore.FieldValue.serverTimestamp() });
     return res.status(200).json({ success: true });
   } catch (erro) {
     const mensagem = typeof erro.message === 'string' && erro.message.startsWith('Planilha') ? erro.message : 'Falha ao sincronizar com Google Sheets';
-    if (referencia) await referencia.update({ planilhaSyncErro: mensagem, planilhaSyncEm: admin.firestore.FieldValue.serverTimestamp() }).catch(() => {});
+    if (referencia) await referencia.update({ planilhaSyncErro: mensagem, planilhaSyncEm: firebaseAdmin.firestore.FieldValue.serverTimestamp() }).catch(() => {});
     return res.status(500).json({ error: mensagem });
   }
 }
