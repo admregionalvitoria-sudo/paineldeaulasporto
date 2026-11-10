@@ -2,20 +2,21 @@ import React, { useState, useContext, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DataContext } from '../context/DataContext';
 import useCurrentTime from '../hooks/useCurrentTime';
-import { Aula, AgendamentoSala } from '../types';
 import { formatarUnidadeCurricular, CANONICAL_UNIDADES_CURRICULARES } from '../utils/curricularUnits';
+import { estaEmManutencao } from '../utils/ambientes';
+import { mascaraTelefone, normalizarTelefone, emailValido } from '../utils/notificacaoAgendamento.mjs';
 import { formatarNomeSala } from '../utils/roomFormatter';
-import { 
-    BuildingIcon, 
-    ClockIcon, 
-    CalendarIcon, 
-    SunIcon, 
-    MoonIcon, 
-    SunHorizonIcon, 
-    PlusCircleIcon, 
-    XIcon, 
-    UserTieIcon, 
-    UsersIcon, 
+import {
+    BuildingIcon,
+    ClockIcon,
+    CalendarIcon,
+    SunIcon,
+    MoonIcon,
+    SunHorizonIcon,
+    PlusCircleIcon,
+    XIcon,
+    UserTieIcon,
+    UsersIcon,
     SettingsIcon
 } from './Icons';
 
@@ -72,76 +73,8 @@ const formatBRToInputDate = (brDate: string): string => {
     return `${y}-${m.padStart(2, '0')}-${d.padStart(2, '0')}`;
 };
 
-export type SalaStatusType = 'livre' | 'pendente' | 'ocupada_aula' | 'reservada';
-
-export interface SalaDisponibilidade {
-    status: SalaStatusType;
-    label: string;
-    aula?: Aula;
-    agendamento?: AgendamentoSala;
-}
-
-export const verificarDisponibilidadeSala = (
-    sala: string,
-    data: string,
-    turno: string,
-    aulas: Aula[],
-    agendamentos: AgendamentoSala[]
-): SalaDisponibilidade => {
-    const normSala = sala.trim().toLowerCase();
-    const normData = data.trim();
-    const normTurno = normalizeTurno(turno);
-
-    // 1. Verificar se há aula regular no cronograma oficial
-    const aulaOcupando = aulas.find(a => 
-        a.sala?.trim().toLowerCase() === normSala &&
-        a.data?.trim() === normData &&
-        normalizeTurno(a.turno) === normTurno
-    );
-    if (aulaOcupando) {
-        return {
-            status: 'ocupada_aula',
-            label: 'Ocupada por Aula Regular',
-            aula: aulaOcupando
-        };
-    }
-
-    // 2. Verificar se há agendamento aprovado pelo gestor
-    const agendamentoAprovado = agendamentos.find(ag => 
-        ag.sala?.trim().toLowerCase() === normSala &&
-        ag.data?.trim() === normData &&
-        normalizeTurno(ag.turno) === normTurno &&
-        ag.status === 'aprovado'
-    );
-    if (agendamentoAprovado) {
-        return {
-            status: 'reservada',
-            label: 'Reservada (Aprovado pelo Gestor)',
-            agendamento: agendamentoAprovado
-        };
-    }
-
-    // 3. Verificar se há solicitação de agendamento pendente de aprovação
-    const agendamentoPendente = agendamentos.find(ag => 
-        ag.sala?.trim().toLowerCase() === normSala &&
-        ag.data?.trim() === normData &&
-        normalizeTurno(ag.turno) === normTurno &&
-        ag.status === 'pendente'
-    );
-    if (agendamentoPendente) {
-        return {
-            status: 'pendente',
-            label: 'Solicitação Pendente de Aprovação',
-            agendamento: agendamentoPendente
-        };
-    }
-
-    // 4. Caso contrário, a sala está LIVRE para agendamento
-    return {
-        status: 'livre',
-        label: 'Disponível / Livre'
-    };
-};
+export { verificarDisponibilidadeSala } from '../utils/agendamento';
+import { verificarDisponibilidadeSala, SalaDisponibilidade } from '../utils/agendamento';
 
 const AgendamentoModal: React.FC<{
     sala: string;
@@ -155,6 +88,8 @@ const AgendamentoModal: React.FC<{
     const [data, setData] = useState(initialData || formatDateToBR(new Date()));
     const [turno, setTurno] = useState(defaultTurno);
     const [solicitante, setSolicitante] = useState('');
+    const [canalNotificacao, setCanalNotificacao] = useState<'whatsapp' | 'email'>('whatsapp');
+    const [telefoneSolicitante, setTelefoneSolicitante] = useState('');
     const [emailSolicitante, setEmailSolicitante] = useState('');
     const [turma, setTurma] = useState('');
     const [disciplina, setDisciplina] = useState('');
@@ -174,8 +109,8 @@ const AgendamentoModal: React.FC<{
     // Verificação de disponibilidade em tempo real para os parâmetros digitados
     const dispAtual = useMemo(() => {
         if (!context) return { status: 'livre', label: 'Disponível' } as SalaDisponibilidade;
-        return verificarDisponibilidadeSala(sala, data, turno, context.aulas, context.agendamentos);
-    }, [sala, data, turno, context?.aulas, context?.agendamentos]);
+        return verificarDisponibilidadeSala(sala, data, turno, context.aulas, context.agendamentos, context.manutencoes);
+    }, [sala, data, turno, context?.aulas, context?.agendamentos, context?.manutencoes]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -188,6 +123,14 @@ const AgendamentoModal: React.FC<{
             return;
         }
 
+        if (dispAtual.status === 'manutencao') {
+            setErrorNotice(`Ambiente em manutenção: ${dispAtual.motivoManutencao}`);
+            return;
+        }
+        if (canalNotificacao === 'whatsapp' ? !normalizarTelefone(telefoneSolicitante) : !emailValido(emailSolicitante)) {
+            setErrorNotice(canalNotificacao === 'whatsapp' ? 'Informe um telefone com DDD e 10 a 11 dígitos.' : 'Informe um e-mail válido.');
+            return;
+        }
         if (dispAtual.status === 'ocupada_aula') {
             setErrorNotice('Esta sala já possui aula regular cadastrada no cronograma para esta data e turno.');
             return;
@@ -207,7 +150,9 @@ const AgendamentoModal: React.FC<{
                 horarioInicio,
                 horarioFim,
                 solicitante: solicitante.trim(),
-                emailSolicitante: emailSolicitante.trim(),
+                canalNotificacao,
+                telefoneSolicitante: canalNotificacao === 'whatsapp' ? normalizarTelefone(telefoneSolicitante) : '',
+                emailSolicitante: canalNotificacao === 'email' ? emailSolicitante.trim() : '',
                 turma: turma.trim(),
                 disciplina: disciplina.trim(),
                 motivo: motivo.trim()
@@ -224,7 +169,7 @@ const AgendamentoModal: React.FC<{
 
     return (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-[#0F2A52]/80 backdrop-blur-md">
-            <motion.div 
+            <motion.div
                 initial={{ opacity: 0, scale: 0.95, y: 15 }}
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.95 }}
@@ -245,7 +190,7 @@ const AgendamentoModal: React.FC<{
                             Preencha os dados da aula ou atividade para solicitar autorização ao gestor.
                         </p>
                     </div>
-                    <button 
+                    <button
                         onClick={onClose}
                         className="p-2 hover:bg-[#F1F5F9] rounded-full transition-all text-[#6B7280] hover:text-[#0F2A52]"
                     >
@@ -255,7 +200,7 @@ const AgendamentoModal: React.FC<{
 
                 {/* Status da Sala Selecionada */}
                 <div className={`p-3 rounded-2xl mb-5 flex items-center justify-between text-xs font-bold border ${
-                    dispAtual.status === 'livre' 
+                    dispAtual.status === 'livre'
                     ? 'bg-emerald-50 border-emerald-200 text-emerald-900'
                     : dispAtual.status === 'pendente'
                     ? 'bg-amber-50 border-amber-200 text-amber-900'
@@ -265,7 +210,7 @@ const AgendamentoModal: React.FC<{
                         {dispAtual.status === 'livre' && <CheckCircleIcon className="w-4 h-4 text-emerald-600" />}
                         {dispAtual.status === 'pendente' && <ClockIcon className="w-4 h-4 text-amber-600" />}
                         {(dispAtual.status === 'ocupada_aula' || dispAtual.status === 'reservada') && <AlertCircleIcon className="w-4 h-4 text-red-600" />}
-                        <span>{data} • {turno}: <strong>{dispAtual.label}</strong></span>
+                        <span>{data} • {turno}: <strong>{dispAtual.label}{dispAtual.motivoManutencao && `: ${dispAtual.motivoManutencao}`}</strong></span>
                     </div>
                     <span className="text-[10px] uppercase font-black px-2 py-0.5 rounded-full bg-white/70">
                         {dispAtual.status === 'livre' ? 'Livre para Solicitar' : dispAtual.status === 'pendente' ? 'Já Solicitada' : 'Indisponível'}
@@ -280,6 +225,14 @@ const AgendamentoModal: React.FC<{
                 )}
 
                 <form onSubmit={handleSubmit} className="flex flex-col gap-3.5 max-h-[60vh] overflow-y-auto pr-1 custom-scrollbar">
+                    <fieldset className="space-y-2">
+                        <legend className="text-xs font-bold">Receber atualizações por *</legend>
+                        <div className="flex rounded-xl bg-slate-100 p-1" role="group" aria-label="Canal de notificação">
+                            {(['whatsapp', 'email'] as const).map(canal => <button key={canal} type="button" aria-pressed={canalNotificacao === canal} onClick={() => setCanalNotificacao(canal)} className={`flex-1 rounded-lg p-2 text-xs font-bold ${canalNotificacao === canal ? 'bg-[#0F2A52] text-white' : 'text-[#0F2A52]'}`}>{canal === 'whatsapp' ? 'WhatsApp (telefone)' : 'Gmail (e-mail)'}</button>)}
+                        </div>
+                        {canalNotificacao === 'whatsapp' ? <label className="block text-xs">Telefone com DDD *<input type="tel" required placeholder="(27) 99999-9999" value={telefoneSolicitante} onChange={e => setTelefoneSolicitante(mascaraTelefone(e.target.value))} className="w-full border border-slate-300 rounded-xl p-3 mt-1" /></label> : <label className="block text-xs">E-mail *<input type="email" required value={emailSolicitante} onChange={e => setEmailSolicitante(e.target.value)} className="w-full border border-slate-300 rounded-xl p-3 mt-1" /></label>}
+                        <p className="text-xs text-slate-500">Você receberá a confirmação de recebimento e a decisão do gestor (aprovado ou negado com motivo) pelo canal escolhido.</p>
+                    </fieldset>
                     <datalist id="uc-list-agendamento">
                         {CANONICAL_UNIDADES_CURRICULARES.map((uc, i) => (
                             <option key={i} value={uc} />
@@ -291,7 +244,7 @@ const AgendamentoModal: React.FC<{
                             <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider px-1">
                                 Data do Agendamento *
                             </label>
-                            <input 
+                            <input
                                 type="date"
                                 value={formatBRToInputDate(data)}
                                 onChange={e => setData(formatInputDateToBR(e.target.value))}
@@ -303,7 +256,7 @@ const AgendamentoModal: React.FC<{
                             <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider px-1">
                                 Turno *
                             </label>
-                            <select 
+                            <select
                                 value={turno}
                                 onChange={e => handleTurnoChange(e.target.value)}
                                 className="bg-[#F8FAFC] border border-[#CBD5E1] p-3 rounded-xl text-xs font-bold outline-none focus:border-[#F4901E] text-[#0F2A52]"
@@ -319,7 +272,7 @@ const AgendamentoModal: React.FC<{
                             <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider px-1">
                                 Solicitante / Instrutor *
                             </label>
-                            <input 
+                            <input
                                 type="text"
                                 placeholder="Nome completo do instrutor..."
                                 value={solicitante}
@@ -332,7 +285,7 @@ const AgendamentoModal: React.FC<{
                             <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider px-1">
                                 Turma (Opcional)
                             </label>
-                            <input 
+                            <input
                                 type="text"
                                 placeholder="Ex: HTC-PORT-1-03"
                                 value={turma}
@@ -347,7 +300,7 @@ const AgendamentoModal: React.FC<{
                             <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider px-1">
                                 Unidade Curricular / Disciplina
                             </label>
-                            <input 
+                            <input
                                 list="uc-list-agendamento"
                                 type="text"
                                 placeholder="Selecione ou digite..."
@@ -361,14 +314,14 @@ const AgendamentoModal: React.FC<{
                                 Horário Específico (Início - Fim)
                             </label>
                             <div className="flex items-center gap-2">
-                                <input 
+                                <input
                                     type="time"
                                     value={horarioInicio}
                                     onChange={e => setHorarioInicio(e.target.value)}
                                     className="bg-[#F8FAFC] border border-[#CBD5E1] p-2.5 rounded-xl text-xs font-bold outline-none focus:border-[#F4901E] text-[#0F2A52] flex-1 text-center"
                                 />
                                 <span className="text-[#64748B] font-bold text-xs">até</span>
-                                <input 
+                                <input
                                     type="time"
                                     value={horarioFim}
                                     onChange={e => setHorarioFim(e.target.value)}
@@ -382,7 +335,7 @@ const AgendamentoModal: React.FC<{
                         <label className="text-[10px] font-black uppercase text-[#6B7280] tracking-wider px-1">
                             Justificativa / Motivo da Solicitação
                         </label>
-                        <textarea 
+                        <textarea
                             rows={2}
                             placeholder="Ex: Reposição de aula prática no laboratório, treinamento de simuladores, evento especial..."
                             value={motivo}
@@ -408,7 +361,7 @@ const AgendamentoModal: React.FC<{
                         </button>
                         <button
                             type="submit"
-                            disabled={submitting || dispAtual.status === 'ocupada_aula' || dispAtual.status === 'reservada'}
+                            disabled={submitting || dispAtual.status === 'manutencao' || dispAtual.status === 'ocupada_aula' || dispAtual.status === 'reservada'}
                             className="flex-1 bg-[#F4901E] text-white py-3.5 rounded-xl font-black uppercase text-xs hover:bg-[#E67E22] transition-all shadow-md active:scale-95 tracking-wider disabled:opacity-50 flex items-center justify-center gap-2"
                         >
                             {submitting ? (
@@ -459,7 +412,7 @@ const SalaDetalhesModal: React.FC<{
 
     return (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-3 sm:p-5 bg-[#0F2A52]/80 backdrop-blur-md">
-            <motion.div 
+            <motion.div
                 initial={{ opacity: 0, scale: 0.96 }}
                 animate={{ opacity: 1, scale: 1 }}
                 exit={{ opacity: 0, scale: 0.96 }}
@@ -480,7 +433,7 @@ const SalaDetalhesModal: React.FC<{
                             Veja abaixo as datas livres e ocupadas. Clique em qualquer horário livre para solicitar o agendamento.
                         </p>
                     </div>
-                    <button 
+                    <button
                         onClick={onClose}
                         className="p-2.5 hover:bg-[#F1F5F9] rounded-full transition-all text-[#6B7280] hover:text-[#0F2A52]"
                     >
@@ -490,7 +443,7 @@ const SalaDetalhesModal: React.FC<{
 
                 {/* Legenda dos Status */}
                 <div className="flex flex-wrap items-center gap-3 p-3 bg-[#F8FAFC] border border-[#E2E8F0] rounded-2xl text-xs mb-4">
-                    <span className="text-[10px] font-black uppercase text-[#64748B]">Legenda:</span>
+                    <span className="text-[10px] font-black uppercase text-[#64748B]">Legenda:</span><span className="font-bold text-amber-800 bg-amber-50 border border-slate-300 rounded-lg px-2.5 py-1">Em manutenção</span>
                     <div className="flex items-center gap-1.5 font-bold text-emerald-800 bg-emerald-50 px-2.5 py-1 rounded-lg border border-emerald-200">
                         <span className="w-2 h-2 rounded-full bg-emerald-500" />
                         <span>Livre / Disponível</span>
@@ -514,11 +467,11 @@ const SalaDetalhesModal: React.FC<{
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                         {proximosDias.map(dia => {
                             return (
-                                <div 
+                                <div
                                     key={dia.dataStr}
                                     className={`p-3.5 rounded-2xl border flex flex-col gap-2.5 transition-all ${
-                                        dia.isHoje 
-                                        ? 'bg-amber-50/40 border-amber-300 shadow-sm' 
+                                        dia.isHoje
+                                        ? 'bg-amber-50/40 border-amber-300 shadow-sm'
                                         : 'bg-white border-[#E2E8F0] hover:border-[#CBD5E1]'
                                     }`}
                                 >
@@ -542,13 +495,13 @@ const SalaDetalhesModal: React.FC<{
                                     {/* 2 Turnos do Dia (Tarde e Noite) */}
                                     <div className="flex flex-col gap-2">
                                         {turnos.map(t => {
-                                            const disp = context ? verificarDisponibilidadeSala(sala, dia.dataStr, t, context.aulas, context.agendamentos) : { status: 'livre', label: 'Livre' } as SalaDisponibilidade;
-                                            
+                                            const disp = context ? verificarDisponibilidadeSala(sala, dia.dataStr, t, context.aulas, context.agendamentos, context.manutencoes) : { status: 'livre', label: 'Livre' } as SalaDisponibilidade;
+
                                             return (
-                                                <div 
+                                                <div
                                                     key={t}
                                                     className={`p-2.5 rounded-xl border flex items-center justify-between text-xs transition-all ${
-                                                        disp.status === 'livre'
+                                                        disp.status === 'manutencao' ? 'bg-amber-50 border-slate-300 text-slate-700' : disp.status === 'livre'
                                                         ? 'bg-emerald-50/60 border-emerald-200 text-emerald-950 hover:bg-emerald-100/80 cursor-pointer'
                                                         : disp.status === 'pendente'
                                                         ? 'bg-amber-50 border-amber-200 text-amber-950'
@@ -565,13 +518,14 @@ const SalaDetalhesModal: React.FC<{
                                                     <div className="flex flex-col min-w-0">
                                                         <span className="font-black text-[11px] uppercase tracking-wider flex items-center gap-1.5">
                                                             <span className={`w-1.5 h-1.5 rounded-full ${
-                                                                disp.status === 'livre' ? 'bg-emerald-500' :
+                                                                disp.status === 'manutencao' ? 'bg-slate-500' : disp.status === 'livre' ? 'bg-emerald-500' :
                                                                 disp.status === 'pendente' ? 'bg-amber-500' :
                                                                 disp.status === 'reservada' ? 'bg-blue-500' : 'bg-red-500'
                                                             }`} />
                                                             {t === 'Vespertino' ? 'Tarde' : 'Noite'}
                                                         </span>
                                                         <span className="text-[10px] text-[#475569] font-medium truncate mt-0.5">
+                                                            {disp.status === 'manutencao' && `Em manutenção: ${disp.motivoManutencao}`}
                                                             {disp.status === 'livre' && 'Disponível'}
                                                             {disp.status === 'pendente' && `Pendente: ${disp.agendamento?.solicitante || 'Aguardando Gestor'}`}
                                                             {disp.status === 'reservada' && `Reservada: ${disp.agendamento?.solicitante || 'Confirmado'}`}
@@ -580,7 +534,7 @@ const SalaDetalhesModal: React.FC<{
                                                     </div>
 
                                                     {disp.status === 'livre' ? (
-                                                        <button 
+                                                        <button
                                                             type="button"
                                                             className="px-2.5 py-1 rounded-lg bg-emerald-600 text-white font-black text-[10px] uppercase hover:bg-emerald-700 transition-all flex items-center gap-1 shadow-xs flex-shrink-0"
                                                         >
@@ -592,7 +546,7 @@ const SalaDetalhesModal: React.FC<{
                                                             disp.status === 'pendente' ? 'bg-amber-200/80 text-amber-900' :
                                                             disp.status === 'reservada' ? 'bg-blue-200/80 text-blue-900' : 'bg-red-200/80 text-red-900'
                                                         }`}>
-                                                            {disp.status === 'pendente' ? 'Pendente' : disp.status === 'reservada' ? 'Reservado' : 'Ocupada'}
+                                                            {disp.status === 'manutencao' ? 'Manutenção' : disp.status === 'pendente' ? 'Pendente' : disp.status === 'reservada' ? 'Reservado' : 'Ocupada'}
                                                         </span>
                                                     )}
                                                 </div>
@@ -609,13 +563,13 @@ const SalaDetalhesModal: React.FC<{
                     <span className="text-xs text-[#64748B] font-medium">
                         Ambiente: <strong className="text-[#0F2A52]">{formatarNomeSala(sala)}</strong>
                     </span>
-                    <button 
+                    {!estaEmManutencao(sala, formatDateToBR(new Date()), context?.manutencoes) && <button
                         onClick={() => onOpenSolicitacao(sala, formatDateToBR(new Date()), 'Vespertino')}
                         className="bg-[#F4901E] text-white px-5 py-2.5 rounded-xl font-black uppercase text-xs hover:bg-[#E67E22] transition-all shadow-md flex items-center gap-2"
                     >
                         <PlusCircleIcon className="w-4 h-4" />
                         <span>Abrir Formulário de Agendamento</span>
-                    </button>
+                    </button>}
                 </div>
             </motion.div>
         </div>
@@ -653,11 +607,12 @@ const AgendamentoScreen: React.FC<{
     const salasComDisponibilidade = useMemo(() => {
         if (!context) return [];
         return salas.map(sala => {
-            const dispVespertino = verificarDisponibilidadeSala(sala, selectedDate, 'Vespertino', context.aulas, context.agendamentos);
-            const dispNoturno = verificarDisponibilidadeSala(sala, selectedDate, 'Noturno', context.aulas, context.agendamentos);
+            const dispVespertino = verificarDisponibilidadeSala(sala, selectedDate, 'Vespertino', context.aulas, context.agendamentos, context.manutencoes);
+            const dispNoturno = verificarDisponibilidadeSala(sala, selectedDate, 'Noturno', context.aulas, context.agendamentos, context.manutencoes);
 
             let dispFoco: SalaDisponibilidade;
-            if (selectedTurno === 'Vespertino') dispFoco = dispVespertino;
+            if (dispVespertino.status === 'manutencao') dispFoco = dispVespertino;
+            else if (selectedTurno === 'Vespertino') dispFoco = dispVespertino;
             else if (selectedTurno === 'Noturno') dispFoco = dispNoturno;
             else {
                 // Se turno for "todos", considera 'livre' se tiver pelo menos 1 turno livre (Tarde ou Noite)
@@ -676,7 +631,7 @@ const AgendamentoScreen: React.FC<{
                 dispNoturno,
             };
         });
-    }, [salas, selectedDate, selectedTurno, context?.aulas, context?.agendamentos]);
+    }, [salas, selectedDate, selectedTurno, context?.aulas, context?.agendamentos, context?.manutencoes]);
 
     // Filtragem e Ordenação das salas (Prioridade: Salas com ocupação no dia primeiro)
     const salasFiltradas = useMemo(() => {
@@ -697,7 +652,7 @@ const AgendamentoScreen: React.FC<{
             return true;
         });
 
-        // Ordenação: 
+        // Ordenação:
         // 1. Salas que possuem alguma ocupação (aula ou agendamento aprovado) ou pendência no dia selecionado aparecem primeiro
         // 2. Ordem alfabética natural do nome formatado da sala
         return [...filtered].sort((a, b) => {
@@ -739,9 +694,9 @@ const AgendamentoScreen: React.FC<{
             {/* Header Limpo e Otimizado para Mobile */}
             <header className="flex-none px-4 py-3 md:px-8 border-b border-[#E5E7EB] bg-white/95 backdrop-blur-xl shadow-xs sticky top-0 z-30 flex items-center justify-between gap-4">
                 <div className="flex items-center gap-3">
-                    <img 
-                        src="https://res.cloudinary.com/dlrdwblso/image/upload/v1785334994/SENAI_COMPLETA_PREFERENCIAL_svm23u.png" 
-                        alt="Logo SENAI" 
+                    <img
+                        src="https://res.cloudinary.com/dlrdwblso/image/upload/v1785334994/SENAI_COMPLETA_PREFERENCIAL_svm23u.png"
+                        alt="Logo SENAI"
                         className="h-7 md:h-9 w-auto object-contain"
                         referrerPolicy="no-referrer"
                     />
@@ -774,7 +729,7 @@ const AgendamentoScreen: React.FC<{
             {/* Banner de Feedback quando há sucesso */}
             <AnimatePresence>
                 {feedbackBanner && (
-                    <motion.div 
+                    <motion.div
                         initial={{ opacity: 0, y: -10 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: -10 }}
@@ -796,7 +751,7 @@ const AgendamentoScreen: React.FC<{
                     {/* Campo de Busca por Sala */}
                     <div className="relative">
                         <SearchIcon className="w-4 h-4 text-[#94A3B8] absolute left-3.5 top-1/2 -translate-y-1/2" />
-                        <input 
+                        <input
                             type="text"
                             placeholder="Buscar sala por nome (ex: LAB01, SALA 05, LAB04)..."
                             value={searchQuery}
@@ -804,7 +759,7 @@ const AgendamentoScreen: React.FC<{
                             className="w-full pl-10 pr-4 py-2.5 bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl text-xs font-bold outline-none focus:border-[#F4901E] text-[#0F2A52] placeholder-[#94A3B8]"
                         />
                         {searchQuery && (
-                            <button 
+                            <button
                                 onClick={() => setSearchQuery('')}
                                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 p-1"
                             >
@@ -821,7 +776,7 @@ const AgendamentoScreen: React.FC<{
                             </label>
                             <div className="flex items-center gap-1.5">
                                 <span className="text-[10px] font-bold text-[#64748B]">Outra:</span>
-                                <input 
+                                <input
                                     type="date"
                                     value={formatBRToInputDate(selectedDate)}
                                     onChange={e => e.target.value && setSelectedDate(formatInputDateToBR(e.target.value))}
@@ -838,8 +793,8 @@ const AgendamentoScreen: React.FC<{
                                         key={item.dataStr}
                                         onClick={() => setSelectedDate(item.dataStr)}
                                         className={`py-2 px-1.5 rounded-xl border text-center transition-all flex flex-col items-center justify-center ${
-                                            isSelected 
-                                            ? 'bg-[#0F2A52] text-white border-[#0F2A52] shadow-xs' 
+                                            isSelected
+                                            ? 'bg-[#0F2A52] text-white border-[#0F2A52] shadow-xs'
                                             : 'bg-[#F8FAFC] text-[#0F2A52] border-[#E2E8F0] hover:border-[#CBD5E1]'
                                         }`}
                                     >
@@ -930,13 +885,13 @@ const AgendamentoScreen: React.FC<{
                             const nomeFormatado = formatarNomeSala(item.sala);
 
                             return (
-                                <motion.div 
+                                <motion.div
                                     key={item.sala}
                                     initial={{ opacity: 0, y: 6 }}
                                     animate={{ opacity: 1, y: 0 }}
                                     className={`bg-white rounded-2xl p-3.5 sm:p-4 border transition-all duration-200 shadow-xs flex flex-col gap-3 hover:shadow-md ${
-                                        isLivre 
-                                        ? 'border-emerald-200/90' 
+                                        isLivre
+                                        ? 'border-emerald-200/90'
                                         : isPendente
                                         ? 'border-amber-200/90'
                                         : 'border-slate-200'
@@ -955,7 +910,7 @@ const AgendamentoScreen: React.FC<{
                                                     {nomeFormatado}
                                                 </h3>
                                                 <span className="text-[10px] font-bold text-[#64748B] flex items-center gap-1">
-                                                    Ambiente SENAI
+                                                    {item.dispFoco.status === 'manutencao' ? `Em manutenção: ${item.dispFoco.motivoManutencao}` : 'Ambiente SENAI'}
                                                 </span>
                                             </div>
                                         </div>
@@ -970,7 +925,7 @@ const AgendamentoScreen: React.FC<{
                                                 <span className="text-[11px]">Calendário</span>
                                             </button>
 
-                                            <button
+                                            {item.dispFoco.status !== 'manutencao' && <button
                                                 onClick={() => setModalSolicitacao({
                                                     open: true,
                                                     sala: item.sala,
@@ -985,7 +940,7 @@ const AgendamentoScreen: React.FC<{
                                             >
                                                 <PlusCircleIcon className="w-3.5 h-3.5" />
                                                 <span>Agendar</span>
-                                            </button>
+                                            </button>}
                                         </div>
                                     </div>
 
@@ -1012,19 +967,20 @@ const AgendamentoScreen: React.FC<{
                                                         }
                                                     }}
                                                     className={`p-2 rounded-xl border text-left transition-all flex flex-col gap-0.5 ${
-                                                        status === 'livre' ? 'bg-emerald-50/70 border-emerald-200 hover:border-emerald-400 cursor-pointer' :
+                                                        status === 'manutencao' ? 'bg-amber-50 border-slate-300 cursor-default' : status === 'livre' ? 'bg-emerald-50/70 border-emerald-200 hover:border-emerald-400 cursor-pointer' :
                                                         status === 'pendente' ? 'bg-amber-50/70 border-amber-200 cursor-default' :
                                                         status === 'reservada' ? 'bg-blue-50/70 border-blue-200 cursor-default' : 'bg-red-50/70 border-red-200 cursor-default'
                                                     }`}
                                                 >
                                                     <span className="text-[10px] font-bold text-[#64748B]">{tObj.nome}</span>
+                                                    {status === 'manutencao' && <span className="text-xs text-amber-800">{tObj.disp.motivoManutencao}</span>}
                                                     <span className={`text-[10px] font-black truncate ${
-                                                        status === 'livre' ? 'text-emerald-700' :
+                                                        status === 'manutencao' ? 'text-slate-600' : status === 'livre' ? 'text-emerald-700' :
                                                         status === 'pendente' ? 'text-amber-700' :
                                                         status === 'reservada' ? 'text-blue-700' : 'text-red-700'
                                                     }`}>
-                                                        {status === 'livre' ? '🟢 Livre' : 
-                                                         status === 'pendente' ? '🟡 Pendente' : 
+                                                        {status === 'manutencao' ? 'Em manutenção' : status === 'livre' ? '🟢 Livre' :
+                                                         status === 'pendente' ? '🟡 Pendente' :
                                                          status === 'reservada' ? '🔵 Reservado' : '🔴 Aula'}
                                                     </span>
                                                 </button>
@@ -1043,7 +999,7 @@ const AgendamentoScreen: React.FC<{
                             <p className="text-xs text-[#64748B] max-w-md">
                                 Nenhuma sala corresponde aos filtros selecionados. Tente limpar os filtros ou selecionar outra data.
                             </p>
-                            <button 
+                            <button
                                 onClick={() => {
                                     setSearchQuery('');
                                     setSelectedTurno('todos');
@@ -1061,7 +1017,7 @@ const AgendamentoScreen: React.FC<{
             {/* Modal de Formulário de Agendamento */}
             <AnimatePresence>
                 {modalSolicitacao.open && (
-                    <AgendamentoModal 
+                    <AgendamentoModal
                         sala={modalSolicitacao.sala}
                         initialData={modalSolicitacao.data}
                         initialTurno={modalSolicitacao.turno}
@@ -1074,7 +1030,7 @@ const AgendamentoScreen: React.FC<{
             {/* Modal de Matriz de Disponibilidade da Sala */}
             <AnimatePresence>
                 {modalDetalhesSala && (
-                    <SalaDetalhesModal 
+                    <SalaDetalhesModal
                         sala={modalDetalhesSala}
                         onClose={() => setModalDetalhesSala(null)}
                         onOpenSolicitacao={(s, d, t) => {

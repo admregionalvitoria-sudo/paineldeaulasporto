@@ -47,6 +47,13 @@ export interface AgendamentoSala {
   horarioFim?: string;
   solicitante: string;
   emailSolicitante?: string;
+  canalNotificacao?: 'whatsapp' | 'email';
+  telefoneSolicitante?: string;
+  observacaoDecisao?: string;
+  decididoPor?: string;
+  decididoEm?: any;
+  planilhaSyncErro?: string | null;
+  planilhaSyncEm?: any;
   turma?: string;
   disciplina?: string;
   motivo?: string;
@@ -89,7 +96,21 @@ export interface ObservacaoLimpeza {
   atualizadoPor?: string;
 }
 
+export interface ManutencaoAmbiente {
+  id: string;
+  sala: string;
+  motivo: string;
+  inicio: string;
+  fim?: string | null;
+  ativo: boolean;
+  criadoPor: string;
+  criadoEm?: any;
+}
+
 export interface DataContextType {
+  manutencoes: ManutencaoAmbiente[];
+  bloquearAmbienteManutencao: (sala: string, motivo: string, inicio: string, fim?: string) => Promise<void>;
+  liberarAmbienteManutencao: (id: string) => Promise<void>;
   aulas: Aula[];
   anuncios: Anuncio[];
   alunos: Aluno[];
@@ -115,7 +136,7 @@ export interface DataContextType {
   uploadMediaFile: (file: File) => Promise<{ src: string; type: 'image' | 'video'; storagePath?: string; name: string }>;
   updatePainelClienteConfig?: (config: Partial<PainelClienteConfig>) => Promise<void>;
   solicitarAgendamento: (dados: Omit<AgendamentoSala, 'id' | 'status' | 'criadoEm'>) => Promise<string>;
-  aprovarAgendamento: (id: string, criarAulaAutomatica?: boolean, aprovador?: string) => Promise<void>;
+  aprovarAgendamento: (id: string, criarAulaAutomatica?: boolean, aprovador?: string, observacaoAprovacao?: string) => Promise<void>;
   rejeitarAgendamento: (id: string, motivoRejeicao?: string) => Promise<void>;
   excluirAgendamento: (id: string) => Promise<void>;
   adicionarAmbiente: (nome: string) => Promise<void>;

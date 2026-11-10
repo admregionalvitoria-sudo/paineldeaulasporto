@@ -159,7 +159,7 @@ export function formatarNomeSala(salaRaw: string | undefined | null): string {
 
   // 4. Checagem de Laboratórios por número (LAB, LABORATÓRIO, LABORATORIO)
   // Ex: LAB01, LAB 01, LAB-01, LAB 1, PORTO-2-LAB11, LABORATORIO 04
-  const labMatch = trimmed.match(/(?:LAB(?:ORAT[OÓ]RIO)?)\s*[-_.]?\s*(\d{1,2})/i);
+  const labMatch = trimmed.match(/(?:LAB(?:ORAT[OÓ]RIO)?)\s*[-_.]?\s*(\d+)/i);
   if (labMatch) {
     const num = parseInt(labMatch[1], 10);
     if (LABS_MAP[num]) {
@@ -171,7 +171,7 @@ export function formatarNomeSala(salaRaw: string | undefined | null): string {
 
   // 5. Checagem de Salas de Aula por número com prefixo "SALA" ou "SALA DE AULA"
   // Ex: SALA 01, SALA 1, SALA-05, SALA DE AULA 02
-  const salaPrefixMatch = trimmed.match(/SALA(?:\s+DE\s+AULA)?\s*[-_.]?\s*(\d{1,2})/i);
+  const salaPrefixMatch = trimmed.match(/SALA(?:\s+DE\s+AULA)?\s*[-_.]?\s*(\d+)/i);
   if (salaPrefixMatch) {
     const num = parseInt(salaPrefixMatch[1], 10);
     if (SALAS_MAP[num]) {

@@ -2,7 +2,9 @@ import React, { useContext, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DataContext, normalizarNomeAmbiente } from '../context/DataContext';
 import useCurrentTime from '../hooks/useCurrentTime';
-import { Aula } from '../types';
+import { horarioUso, usosDoDia } from '../utils/limpeza';
+import { estaEmManutencao } from '../utils/ambientes';
+import { Aula, ObservacaoLimpeza } from '../types';
 import { formatarNomeSala } from '../utils/roomFormatter';
 import {
   DoorOpen,
@@ -57,72 +59,6 @@ export const getNomeCurtoSala = (salaStr: string | undefined): string => {
   return formatada.trim();
 };
 
-const dateStrToNumber = (dStr: string): number => {
-  if (!dStr) return 0;
-  const parts = dStr.split('/');
-  if (parts.length !== 3) return 0;
-  return parseInt(parts[2], 10) * 10000 + parseInt(parts[1], 10) * 100 + parseInt(parts[0], 10);
-};
-
-const resolveTurno = (turnoStr?: string, startMinutes?: number): TurnoType => {
-  if (turnoStr) {
-    const t = turnoStr.toLowerCase().trim();
-    if (t.includes('mat')) return 'Matutino';
-    if (t.includes('vesp')) return 'Vespertino';
-    if (t.includes('not')) return 'Noturno';
-  }
-  if (startMinutes !== undefined) {
-    if (startMinutes < 12 * 60) return 'Matutino';
-    if (startMinutes < 18 * 60) return 'Vespertino';
-    return 'Noturno';
-  }
-  return 'Matutino';
-};
-
-const parseTimeToMinutes = (timeStr: string | undefined, defaultTurno?: string): { inicio: string; fim: string; start: number; end: number; turno: TurnoType } => {
-  let startMinutes = 0;
-  let endMinutes = 0;
-  let inicio = '07:00';
-  let fim = '11:30';
-
-  const turno = resolveTurno(defaultTurno);
-  if (turno === 'Vespertino') {
-    inicio = '13:00';
-    fim = '17:30';
-  } else if (turno === 'Noturno') {
-    inicio = '18:00';
-    fim = '22:00';
-  }
-
-  if (timeStr && timeStr.includes(':')) {
-    const parts = timeStr.trim().split(':');
-    const h = parseInt(parts[0], 10);
-    const m = parseInt(parts[1], 10) || 0;
-    if (!isNaN(h)) {
-      startMinutes = h * 60 + m;
-      inicio = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
-      endMinutes = startMinutes + 270;
-      const endH = Math.floor(endMinutes / 60);
-      const endM = endMinutes % 60;
-      fim = `${String(endH).padStart(2, '0')}:${String(endM).padStart(2, '0')}`;
-    }
-  } else {
-    if (turno === 'Matutino') {
-      startMinutes = 7 * 60;
-      endMinutes = 11 * 60 + 30;
-    } else if (turno === 'Vespertino') {
-      startMinutes = 13 * 60;
-      endMinutes = 17 * 60 + 30;
-    } else if (turno === 'Noturno') {
-      startMinutes = 18 * 60;
-      endMinutes = 22 * 60;
-    }
-  }
-
-  const finalTurno = resolveTurno(defaultTurno, startMinutes);
-  return { inicio, fim, start: startMinutes, end: endMinutes, turno: finalTurno };
-};
-
 const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDashboard }) => {
   const context = useContext(DataContext);
   const { formattedDate, formattedTime } = useCurrentTime();
@@ -143,14 +79,14 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
     const month = String(now.getMonth() + 1).padStart(2, '0');
     const year = now.getFullYear();
     return `${day}/${month}/${year}`;
-  }, []);
+  }, [formattedDate]);
 
   // Processar salas: apenas salas com aulas AGENDADAS HOJE (ou com aviso específico da gestão)
   // Salas usadas ontem que estão livres hoje não são exibidas (conforme solicitado pelo usuário)
   const unifiedRooms = useMemo(() => {
     if (!context) return [];
 
-    const aulasHoje = context.aulas.filter(a => (a.data || '').trim() === todayStr);
+    const aulasHoje = usosDoDia(todayStr, context.aulas, context.agendamentos, context.manutencoes);
 
     const allRoomsMap = new Map<string, {
       sala: string;
@@ -162,11 +98,11 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
     aulasHoje.forEach(aula => {
       if (!aula.sala || !aula.sala.trim()) return;
       const norm = normalizarNomeAmbiente(aula.sala);
-      const timeParsed = parseTimeToMinutes(aula.inicio, aula.turno);
+      const timeParsed = horarioUso(aula.inicio, aula.turno, aula.fim);
       const classInfo: RoomClassInfo = {
         aula,
-        inicio: aula.inicio && aula.inicio.includes(':') ? aula.inicio : timeParsed.inicio,
-        fim: aula.fim && aula.fim.includes(':') ? aula.fim : timeParsed.fim,
+        inicio: timeParsed.inicio,
+        fim: timeParsed.fim,
         startMinutes: timeParsed.start,
         endMinutes: timeParsed.end,
         turno: timeParsed.turno
@@ -183,6 +119,12 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
       }
     });
 
+    Object.values<ObservacaoLimpeza>(context.observacoesLimpeza || {}).forEach(obs => {
+      const norm = normalizarNomeAmbiente(obs.sala);
+      if (obs.observacao?.trim() && !allRoomsMap.has(norm) && !estaEmManutencao(obs.sala, todayStr, context.manutencoes)) {
+        allRoomsMap.set(norm, { sala: formatarNomeSala(obs.sala) || obs.sala, nomeCurto: getNomeCurtoSala(obs.sala), classesHoje: [] });
+      }
+    });
     const list: RoomCleanItem[] = [];
 
     allRoomsMap.forEach((roomData, norm) => {
@@ -429,6 +371,7 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
         </div>
       </section>
 
+      <p className="text-xs font-bold text-amber-800 mb-3">{new Set((context?.manutencoes || []).filter(m => estaEmManutencao(m.sala, todayStr, [m])).map(m => normalizarNomeAmbiente(m.sala))).size} em manutenção</p>
       {/* Lista de Ambientes Agendados - Sem horários, apenas Turnos */}
       <main className="flex-1 px-3 sm:px-6 max-w-[2400px] mx-auto w-full z-10">
         {displayRooms.length === 0 ? (

@@ -2,6 +2,11 @@ import { describe, it, expect } from 'vitest';
 import { formatarNomeSala, CANONICAL_SALAS } from '../utils/roomFormatter';
 
 describe('formatarNomeSala (Nomes Oficiais das Salas e Laboratórios SENAI)', () => {
+  it('preserva números com três dígitos sem colidir com ambientes oficiais', () => {
+    expect(formatarNomeSala('LAB 101')).toBe('Laboratório 101');
+    expect(formatarNomeSala('LAB 102')).toBe('Laboratório 102');
+    expect(formatarNomeSala('SALA 101')).toBe('Sala de Aula 101');
+  });
   it('deve possuir exatamente os 26 ambientes oficiais cadastrados', () => {
     expect(CANONICAL_SALAS.length).toBe(26);
   });

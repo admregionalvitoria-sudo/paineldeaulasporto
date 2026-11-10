@@ -409,6 +409,7 @@ const getAutomaticShift = (): string => {
 const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?: () => void }> = ({ onAdminClick, onAgendamentoClick }) => {
     const context = useContext(DataContext);
     const { isDarkMode, toggleTheme } = useTheme();
+    const { formattedDate: dataAtual } = useCurrentTime();
     const [filteredAulas, setFilteredAulas] = useState<Aula[]>([]);
     const [currentShift, setCurrentShift] = useState<string>(getAutomaticShift());
     const [isFullscreen, setIsFullscreen] = useState(false);
@@ -478,7 +479,7 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
             const filtered = context.aulas.filter(a => {
                 const aulaData = a.data.trim();
                 const matchesDateAndShift = aulaData === todayStr && normalizeTurno(a.turno) === normalizeTurno(currentShift);
-                if (!matchesDateAndShift) return false;
+                if (!matchesDateAndShift || a.ativa === false) return false;
 
                 const term = searchTurma.toLowerCase().trim();
                 if (!term) return true;
@@ -493,7 +494,7 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
             
             setFilteredAulas(filtered);
         }
-    }, [context?.aulas, context?.loading, currentShift, searchTurma]);
+    }, [context?.aulas, context?.loading, currentShift, searchTurma, dataAtual]);
 
     if (!context) return null;
 

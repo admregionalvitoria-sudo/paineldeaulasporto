@@ -2,6 +2,7 @@ import React, { useState, useContext, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DataContext, ExtendedDataContextType, normalizarNomeAmbiente, calcularTurnoPorHorario } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
+import { estaEmManutencao } from '../utils/ambientes';
 import { Aula, AgendamentoSala } from '../types';
 import { formatarUnidadeCurricular, CANONICAL_UNIDADES_CURRICULARES } from '../utils/curricularUnits';
 import { formatarNomeSala, CANONICAL_SALAS } from '../utils/roomFormatter';
@@ -423,6 +424,10 @@ const AddModal: React.FC<{
 // Aba de Gestão de Ambientes (com regra de desduplicação rigorosa)
 const AmbientesManagementSection: React.FC = () => {
   const context = useContext(DataContext);
+  const [salaManutencao, setSalaManutencao] = useState('');
+  const [motivoManutencao, setMotivoManutencao] = useState('');
+  const [inicioManutencao, setInicioManutencao] = useState(new Date().toLocaleDateString('en-CA'));
+  const [fimManutencao, setFimManutencao] = useState('');
   const [novoAmbiente, setNovoAmbiente] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [feedback, setFeedback] = useState<{ tipo: 'sucesso' | 'erro'; msg: string } | null>(null);
@@ -457,6 +462,26 @@ const AmbientesManagementSection: React.FC = () => {
 
   return (
     <div className="space-y-6">
+      {salaManutencao && <div className="fixed inset-0 z-[100] bg-[#0F2A52]/70 flex items-center justify-center p-4">
+        <form className="bg-white rounded-3xl p-6 w-full max-w-md space-y-4" onSubmit={async e => {
+          e.preventDefault(); setIsSaving(true);
+          const br = (v: string) => v ? v.split('-').reverse().join('/') : '';
+          try { await context?.bloquearAmbienteManutencao(salaManutencao, motivoManutencao, br(inicioManutencao), br(fimManutencao)); setSalaManutencao(''); }
+          catch (erro: any) { setFeedback({ tipo: 'erro', msg: erro.message }); }
+          finally { setIsSaving(false); }
+        }}>
+          <h3 className="font-black text-[#0F2A52]">Manutenção — {formatarNomeSala(salaManutencao)}</h3>
+          <label className="block text-xs">Motivo *<textarea required value={motivoManutencao} onChange={e => setMotivoManutencao(e.target.value)} className="w-full border rounded-xl p-3" /></label>
+          <label className="block text-xs">Início *<input type="date" required value={inicioManutencao} onChange={e => setInicioManutencao(e.target.value)} className="w-full border rounded-xl p-3" /></label>
+          <label className="block text-xs">Fim (opcional, vazio = indeterminado)<input type="date" min={inicioManutencao} value={fimManutencao} onChange={e => setFimManutencao(e.target.value)} className="w-full border rounded-xl p-3" /></label>
+          {feedback?.tipo === 'erro' && <p role="alert" className="text-red-700 text-xs">{feedback.msg}</p>}
+          <div className="flex gap-3"><button type="button" onClick={() => setSalaManutencao('')}>Cancelar</button><button disabled={isSaving || !motivoManutencao.trim()} className="bg-[#F4901E] text-white rounded-xl px-4 py-2">Travar ambiente</button></div>
+        </form>
+      </div>}
+      <div className="rounded-2xl border border-amber-200 p-4 space-y-3">
+        <h3 className="font-black text-[#0F2A52]">Manutenções ativas e programadas</h3>
+        {context?.manutencoes.filter(m => m.ativo).map(m => <div key={m.id} className="flex justify-between gap-4 text-xs"><span><strong>{formatarNomeSala(m.sala)}</strong>: {m.motivo} ({m.inicio} até {m.fim || 'indeterminado'})</span><button className="text-[#0F2A52] font-bold" onClick={async () => { try { await context.liberarAmbienteManutencao(m.id); } catch { setFeedback({ tipo: 'erro', msg: 'Falha ao liberar ambiente.' }); } }}>Liberar</button></div>)}
+      </div>
       {/* Informações da Regra de Integridade */}
       <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 flex items-start gap-3 text-xs text-blue-900">
         <ShieldCheck className="w-5 h-5 text-blue-600 shrink-0 mt-0.5" />
@@ -553,6 +578,7 @@ const AmbientesManagementSection: React.FC = () => {
                   <span className="text-[9px] font-black uppercase text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded">
                     Ativo & Único
                   </span>
+                  <button className="text-xs font-bold text-amber-800" onClick={() => { setSalaManutencao(sala); setMotivoManutencao(''); setFimManutencao(''); setFeedback(null); }}>Travar p/ manutenção</button>
                   {context?.excluirAmbiente && (
                     <button
                       onClick={() => {
@@ -583,6 +609,10 @@ const AgendamentosAdminSection: React.FC = () => {
   const [statusFilter, setStatusFilter] = useState<'todos' | 'pendente' | 'aprovado' | 'rejeitado'>('pendente');
   const [searchTerm, setSearchTerm] = useState('');
   const [motivoRejeicao, setMotivoRejeicao] = useState('');
+  const [itemAprovando, setItemAprovando] = useState<AgendamentoSala | null>(null);
+  const [observacaoAprovacao, setObservacaoAprovacao] = useState('');
+  const [erroDecisao, setErroDecisao] = useState('');
+  const [salvandoDecisao, setSalvandoDecisao] = useState(false);
   const [itemRejeitando, setItemRejeitando] = useState<AgendamentoSala | null>(null);
 
   const agendamentos = context.agendamentos || [];
@@ -612,18 +642,31 @@ const AgendamentosAdminSection: React.FC = () => {
 
   const handleAprovar = async (ag: AgendamentoSala) => {
     const responsavel = usuarioAtual?.nome || usuarioAtual?.email || 'Administrador SENAI';
-    await context.aprovarAgendamento(ag.id, true, responsavel);
+    const manutencao = estaEmManutencao(ag.sala, ag.data, context.manutencoes);
+    if (manutencao) { setErroDecisao(`Não é possível aprovar: ambiente em manutenção. ${manutencao.motivo}`); return; }
+    setSalvandoDecisao(true);
+    try { await context.aprovarAgendamento(ag.id, true, responsavel, observacaoAprovacao); setItemAprovando(null); }
+    catch (erro: any) { setErroDecisao(erro.message); }
+    finally { setSalvandoDecisao(false); }
   };
 
   const handleRejeitarConfirm = async () => {
-    if (!itemRejeitando) return;
-    await context.rejeitarAgendamento(itemRejeitando.id, motivoRejeicao.trim() || 'Não autorizado');
-    setItemRejeitando(null);
-    setMotivoRejeicao('');
+    if (!itemRejeitando || !motivoRejeicao.trim()) return;
+    setSalvandoDecisao(true);
+    try { await context.rejeitarAgendamento(itemRejeitando.id, motivoRejeicao.trim()); setItemRejeitando(null); setMotivoRejeicao(''); }
+    catch (erro: any) { setErroDecisao(erro.message); }
+    finally { setSalvandoDecisao(false); }
   };
 
   return (
     <div className="space-y-6">
+      {erroDecisao && <p role="alert" className="text-red-700 text-xs">{erroDecisao}</p>}
+      {itemAprovando && <div className="fixed inset-0 z-50 bg-[#0F2A52]/70 flex items-center justify-center p-4"><div className="bg-white rounded-3xl p-6 max-w-md w-full space-y-4">
+        <h3 className="font-black text-[#0F2A52]">Aprovar solicitação — {itemAprovando.sala}</h3>
+        <label className="block text-xs">Observação do gestor (opcional)<textarea value={observacaoAprovacao} onChange={e => setObservacaoAprovacao(e.target.value)} className="border rounded-xl p-3 w-full" /></label>
+        {erroDecisao && <p role="alert" className="text-red-700 text-xs">{erroDecisao}</p>}
+        <div className="flex gap-3"><button onClick={() => setItemAprovando(null)}>Cancelar</button><button disabled={salvandoDecisao} onClick={() => handleAprovar(itemAprovando)} className="bg-emerald-600 text-white px-4 py-2 rounded-xl">Confirmar aprovação</button></div>
+      </div></div>}
       {/* Modal de Rejeição */}
       {itemRejeitando && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-[#0F2A52]/70 backdrop-blur-md">
@@ -631,12 +674,15 @@ const AgendamentosAdminSection: React.FC = () => {
             <h3 className="text-sm font-black uppercase text-[#0F2A52] mb-2">Recusar Solicitação</h3>
             <p className="text-xs text-[#6B7280] mb-4">Sala: {itemRejeitando.sala} para {itemRejeitando.solicitante}</p>
             <textarea
-              placeholder="Informe o motivo da recusa..."
+              required
+              aria-label="Motivo obrigatório da recusa"
+              placeholder="Informe o motivo da recusa (obrigatório)..."
               value={motivoRejeicao}
               onChange={(e) => setMotivoRejeicao(e.target.value)}
               rows={3}
               className="w-full bg-[#F8FAFC] border border-[#CBD5E1] rounded-xl p-3 text-xs text-[#0F2A52] outline-none focus:border-red-500 mb-4"
             />
+            {erroDecisao && <p role="alert" className="text-red-700 text-xs">{erroDecisao}</p>}
             <div className="flex justify-end gap-2">
               <button
                 onClick={() => setItemRejeitando(null)}
@@ -645,6 +691,7 @@ const AgendamentosAdminSection: React.FC = () => {
                 Cancelar
               </button>
               <button
+                disabled={salvandoDecisao || !motivoRejeicao.trim()}
                 onClick={handleRejeitarConfirm}
                 className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-black uppercase"
               >
@@ -724,14 +771,14 @@ const AgendamentosAdminSection: React.FC = () => {
             {ag.status === 'pendente' && (
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => handleAprovar(ag)}
+                  onClick={() => { setItemAprovando(ag); setObservacaoAprovacao(''); setErroDecisao(''); }}
                   className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-black text-xs uppercase shadow-xs flex items-center gap-1.5"
                 >
                   <CheckCircle className="w-4 h-4" />
                   Aprovar
                 </button>
                 <button
-                  onClick={() => setItemRejeitando(ag)}
+                  onClick={() => { setItemRejeitando(ag); setMotivoRejeicao(''); setErroDecisao(''); }}
                   className="px-4 py-2 rounded-xl bg-red-50 hover:bg-red-600 hover:text-white text-red-600 font-bold text-xs uppercase border border-red-200 transition-all flex items-center gap-1.5"
                 >
                   <XCircle className="w-4 h-4" />

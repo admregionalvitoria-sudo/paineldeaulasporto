@@ -8,7 +8,9 @@
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "lint": "tsc --noEmit",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "notificador": "node --env-file-if-exists=.env.local scripts/notificador-agendamentos.mjs",
+    "test": "vitest run"
   },
   "dependencies": {
     "@tailwindcss/vite": "^4.0.0",
@@ -19,8 +21,10 @@
     "firebase": "^12.8.0",
     "firebase-admin": "^14.3.0",
     "fs": "^0.0.1-security",
+    "google-auth-library": "^11.3.4",
     "lucide-react": "^1.39.0",
     "motion": "^12.35.0",
+    "nodemailer": "^10.5.0",
     "path": "^0.12.7",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.0",
@@ -34,6 +38,7 @@
     "esbuild": "^0.28.2",
     "tsx": "^4.23.13",
     "typescript": "~5.8.2",
-    "vite": "^6.2.0"
+    "vite": "^6.2.0",
+    "vitest": "^5.1.0"
   }
 }

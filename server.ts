@@ -7,6 +7,7 @@ import { fileURLToPath } from 'url';
 import { createServer as createViteServer } from 'vite';
 import uploadHandler from './api/upload.js';
 import usuariosHandler from './api/usuarios.js';
+import agendamentoPlanilhaHandler from './api/agendamento-planilha.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -48,6 +49,8 @@ async function startServer() {
       }
     }
   });
+
+  app.all('/api/agendamento-planilha', agendamentoPlanilhaHandler);
 
   // Helper functions for db.json fallback
   const INITIAL_DATA = {

@@ -1,6 +1,6 @@
 import React, { createContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { upload as vercelBlobUpload } from '@vercel/blob/client';
-import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType, AuditAction, PainelClienteConfig, ObservacaoLimpeza } from '../types';
+import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType, AuditAction, PainelClienteConfig, ObservacaoLimpeza, ManutencaoAmbiente } from '../types';
 import { db, storage, auth } from '../firebase';
 import { formatarUnidadeCurricular } from '../utils/curricularUnits';
 import { formatarNomeSala, CANONICAL_SALAS } from '../utils/roomFormatter';
@@ -37,13 +37,8 @@ export const DataContext = createContext<ExtendedDataContextType | undefined>(un
 const FIRESTORE_ROOT_COLLECTION = 'porto';
 const FIRESTORE_DATA_DOCUMENT = 'dados';
 
-export const normalizarNomeAmbiente = (nome: string): string => {
-  if (!nome) return '';
-  return nome
-    .trim()
-    .replace(/\s+/g, ' ')
-    .toUpperCase();
-};
+export { normalizarNomeAmbiente } from '../utils/ambientes';
+import { normalizarNomeAmbiente, estaEmManutencao, dataBRNumero } from '../utils/ambientes';
 
 const compressImageToDataUrl = (file: File): Promise<string> => {
   return new Promise((resolve, reject) => {
@@ -197,6 +192,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [aulas, setAulas] = useState<Aula[]>([]);
   const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
   const [alunos, setAlunos] = useState<Aluno[]>([]);
+  const [manutencoes, setManutencoes] = useState<ManutencaoAmbiente[]>([]);
   const [agendamentos, setAgendamentos] = useState<AgendamentoSala[]>([]);
   const [ambientesPersonalizados, setAmbientesPersonalizados] = useState<{ id: string; nome: string }[]>([]);
   const [painelClienteConfig, setPainelClienteConfig] = useState<PainelClienteConfig>(DEFAULT_PAINEL_CLIENTE_CONFIG);
@@ -456,10 +452,15 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       setAlunos(alunosData);
     });
 
+    const unsubManutencoes = onSnapshot(collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'manutencoes'), snapshot => {
+      setManutencoes(snapshot.docs.map(d => ({ ...d.data(), id: d.id } as ManutencaoAmbiente)));
+    }, () => console.warn('Falha ao carregar manutenções'));
+
     const unsubAgendamentos = onSnapshot(agendamentosCollectionRef, (snapshot) => {
       const agendamentosData = snapshot.docs.map(docSnap => {
         const d = docSnap.data();
         return {
+          ...d,
           id: docSnap.id,
           sala: d.sala || '',
           data: d.data || '',
@@ -539,6 +540,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       unsubAnuncios();
       unsubAlunos();
       unsubAgendamentos();
+      unsubManutencoes();
       unsubPainelCliente();
       unsubLimpeza();
       clearTimeout(reloadTimeoutRef.current);
@@ -1099,8 +1101,36 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  const bloquearAmbienteManutencao = async (sala: string, motivo: string, inicio: string, fim?: string) => {
+    if (!sala.trim() || !motivo.trim() || !dataBRNumero(inicio) || (fim && (!dataBRNumero(fim) || dataBRNumero(fim) < dataBRNumero(inicio)))) throw new Error('Informe motivo e datas válidas para a manutenção.');
+    const registro = { sala, motivo: motivo.trim(), inicio, fim: fim || null, ativo: true, criadoPor: auth.currentUser?.email || 'Gestor', criadoEm: serverTimestamp() };
+    const ref = await addDoc(collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'manutencoes'), registro);
+    await registrarLog('BLOQUEAR_MANUTENCAO', 'manutencao', ref.id, `${sala}: ${motivo}`);
+  };
+  const liberarAmbienteManutencao = async (id: string) => {
+    await updateDoc(doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'manutencoes', id), { ativo: false });
+    await registrarLog('LIBERAR_MANUTENCAO', 'manutencao', id, 'Ambiente liberado da manutenção');
+  };
+  const sincronizarPlanilha = async (id: string) => {
+    const referencia = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos', id);
+    try {
+      const resposta = await fetch('/api/agendamento-planilha', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agendamentoId: id }), signal: AbortSignal.timeout(30000) });
+      if (!resposta.ok) {
+        const retorno = await resposta.json().catch(() => ({}));
+        const mensagem = retorno.error === 'Credencial Google Sheets não configurada' || /^Google Sheets: HTTP \d+$/.test(retorno.error) ? retorno.error : `Falha ao sincronizar planilha (HTTP ${resposta.status})`;
+        throw new Error(mensagem);
+      }
+      await updateDoc(referencia, { planilhaSyncErro: null, planilhaSyncEm: serverTimestamp() });
+    } catch (erro: any) {
+      console.warn('Falha na sincronização do agendamento com a planilha');
+      const mensagem = erro.name === 'TimeoutError' ? 'Tempo limite ao sincronizar planilha' : erro.message || 'Falha ao sincronizar planilha';
+      await updateDoc(referencia, { planilhaSyncErro: mensagem, planilhaSyncEm: serverTimestamp() }).catch(() => console.warn('Falha ao registrar diagnóstico de sincronização'));
+    }
+  };
+
   const solicitarAgendamento = async (dados: Omit<AgendamentoSala, 'id' | 'status' | 'criadoEm'>): Promise<string> => {
     try {
+      if (estaEmManutencao(dados.sala, dados.data, manutencoes)) throw new Error('Ambiente em manutenção nesta data.');
       const agendamentosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos');
       const docRef = await addDoc(agendamentosCollectionRef, {
         ...dados,
@@ -1109,6 +1139,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         criadoEm: serverTimestamp(),
         timestamp: Date.now()
       });
+      void sincronizarPlanilha(docRef.id);
       return docRef.id;
     } catch (e: any) {
       console.error("Erro ao registrar solicitação de agendamento:", e);
@@ -1116,18 +1147,24 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
-  const aprovarAgendamento = async (id: string, criarAulaAutomatica: boolean = true, aprovador: string = 'Gestor') => {
+  const aprovarAgendamento = async (id: string, criarAulaAutomatica: boolean = true, aprovador: string = 'Gestor', observacaoAprovacao: string = '') => {
     try {
       const agendamento = agendamentos.find(a => a.id === id);
       if (!agendamento) throw new Error("Agendamento não encontrado.");
 
+      if (estaEmManutencao(agendamento.sala, agendamento.data, manutencoes)) throw new Error('Não é possível aprovar: ambiente em manutenção nesta data.');
       const agendamentoDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos', id);
       await updateDoc(agendamentoDocRef, {
         status: 'aprovado',
+        observacaoDecisao: observacaoAprovacao.trim(),
+        criarAulaAoAprovar: criarAulaAutomatica,
+        decididoPor: aprovador,
+        decididoEm: serverTimestamp(),
         aprovadoPor: aprovador,
         aprovadoEm: serverTimestamp(),
       });
 
+      void sincronizarPlanilha(id);
       if (criarAulaAutomatica) {
         const inicioPadrao = agendamento.horarioInicio || (
           agendamento.turno === 'Matutino' ? '07:00' :
@@ -1164,11 +1201,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       );
     } catch (e: any) {
       console.error("Erro ao aprovar agendamento:", e);
-      alert("Erro ao aprovar agendamento: " + (e.message || ''));
+      throw e;
     }
   };
 
   const rejeitarAgendamento = async (id: string, motivoRejeicao?: string) => {
+    if (!motivoRejeicao?.trim()) throw new Error('O motivo da recusa é obrigatório.');
     try {
       const agendamento = agendamentos.find(a => a.id === id);
       const user = auth.currentUser;
@@ -1177,9 +1215,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const agendamentoDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos', id);
       await updateDoc(agendamentoDocRef, {
         status: 'rejeitado',
+        observacaoDecisao: motivoRejeicao.trim(),
+        decididoPor: responsavel,
+        decididoEm: serverTimestamp(),
         motivoRejeicao: motivoRejeicao || 'Não autorizado pela coordenação'
       });
 
+      void sincronizarPlanilha(id);
       await registrarLog(
         'REJEITAR_AGENDAMENTO',
         'agendamento',
@@ -1188,7 +1230,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       );
     } catch (e) {
       console.error("Erro ao rejeitar agendamento:", e);
-      alert("Erro ao atualizar agendamento.");
+      throw e;
     }
   };
 
@@ -1297,6 +1339,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   return (
     <DataContext.Provider value={{ 
+      manutencoes, bloquearAmbienteManutencao, liberarAmbienteManutencao,
       aulas, anuncios, alunos, agendamentos, salasCadastradas, painelClienteConfig, observacoesLimpeza, loading, error, isOffline,
       addAula, updateAulasFromCSV, updateAula, deleteAula, 
       clearAulas, addAnuncio, deleteAnuncio, replaceAnuncio, reorderAnuncios, clearAllAnuncios,
