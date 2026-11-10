@@ -9,7 +9,6 @@
     "start": "node dist/server.cjs",
     "lint": "tsc --noEmit",
     "preview": "vite preview",
-    "notificador": "node --env-file-if-exists=.env.local scripts/notificador-agendamentos.mjs",
     "test": "vitest run"
   },
   "dependencies": {
@@ -24,7 +23,6 @@
     "google-auth-library": "^11.3.4",
     "lucide-react": "^1.39.0",
     "motion": "^12.35.0",
-    "nodemailer": "^10.5.0",
     "path": "^0.12.7",
     "qrcode.react": "^4.2.0",
     "react": "^19.2.0",
