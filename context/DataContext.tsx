@@ -1122,7 +1122,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const resposta = await fetch('/api/agendamento-planilha', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agendamentoId: id }), signal: AbortSignal.timeout(30000) });
       if (!resposta.ok) {
         const retorno = await resposta.json().catch(() => ({}));
-        const mensagem = retorno.error === 'Credencial Google Sheets não configurada' || /^Google Sheets: HTTP \d+$/.test(retorno.error) ? retorno.error : `Falha ao sincronizar planilha (HTTP ${resposta.status})`;
+        const mensagem = typeof retorno.error === 'string' && retorno.error.startsWith('Planilha') ? retorno.error : `Falha ao sincronizar planilha (HTTP ${resposta.status})`;
         throw new Error(mensagem);
       }
       await updateDoc(referencia, { planilhaSyncErro: null, planilhaSyncEm: serverTimestamp() });

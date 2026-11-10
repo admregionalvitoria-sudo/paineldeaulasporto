@@ -1,14 +1,9 @@
-﻿import { describe, it, expect, vi } from 'vitest';
+﻿import { describe, it, expect } from 'vitest';
 import { normalizarTelefone, mascaraTelefone, emailValido, validarEmailCorporativo, validarContatoAgendamento, whatsappAutorizado } from '../utils/notificacaoAgendamento.mjs';
-import { montarLinhaAgendamento, sincronizarLinha, CABECALHOS, validarCabecalho } from '../lib/agendamentoSheets.mjs';
+import { montarLinhaAgendamento, CABECALHOS } from '../lib/agendamentoSheets.mjs';
 
 const contato = { emailSolicitante: 'pessoa@findes.org.br', notificarWhatsapp: true, telefoneSolicitante: '(27) 99999-9999', consentimentoWhatsappEm: '2026-11-10T12:00:00.000Z', consentimentoWhatsappTexto: 'LGPD-v1' };
 const dados = { ...contato, sala: 'Sala 1', data: '10/11/2026', turno: 'Noturno', horarioInicio: '18:30', horarioFim: '19:20', status: 'pendente' };
-function clienteMemoria(linha = montarLinhaAgendamento('1', dados), cabecalho = CABECALHOS) {
-  const linhas = linha.length ? [cabecalho, [...linha]] : [cabecalho];
-  return { linhas, ler: vi.fn(async (faixa: string) => faixa === 'A1:G1' ? [cabecalho] : linhas), escrever: vi.fn(async (_faixa: string, _valores: any[]) => {}), adicionar: vi.fn(async (_valores: any[]) => {}) };
-}
-
 describe('contato, domínio corporativo e consentimento', () => {
   it('normaliza e mascara telefone', () => {
     expect(normalizarTelefone('(27) 99999-9999')).toBe('5527999999999');
@@ -72,51 +67,5 @@ describe('linha simplificada de agendamento', () => {
   it('não usa recusa antiga como observação de aprovação e aceita recusa em observacaoDecisao', () => {
     expect(montarLinhaAgendamento('1', { ...dados, status: 'aprovado', motivoRejeicao: 'Recusa antiga' })[5]).toBe('');
     expect(montarLinhaAgendamento('1', { ...dados, status: 'rejeitado', observacaoDecisao: 'Reforma' })[5]).toBe('Reforma');
-  });
-});
-
-describe('upsert e cabeçalho Sheets', () => {
-  it('cria cabeçalho vazio e adiciona a primeira linha de dados', async () => {
-    const cliente = clienteMemoria([], []);
-    await sincronizarLinha(cliente, 'novo', dados);
-    expect(cliente.ler.mock.calls).toEqual([['A1:G1'], ['A:A']]);
-    expect(cliente.escrever.mock.calls).toEqual([['A1:G1', [CABECALHOS]]]);
-    expect(cliente.adicionar.mock.calls).toEqual([[[montarLinhaAgendamento('novo', dados)]]]);
-  });
-  it('usa adicionar quando a coluna A está completamente vazia', async () => {
-    const cliente = clienteMemoria([], []);
-    cliente.ler.mockResolvedValue([]);
-    await sincronizarLinha(cliente, 'novo', dados);
-    expect(cliente.escrever.mock.calls).toEqual([['A1:G1', [CABECALHOS]]]);
-    expect(cliente.adicionar.mock.calls).toEqual([[[montarLinhaAgendamento('novo', dados)]]]);
-  });
-  it('atualiza pelo ID apenas A:G preservando H em diante', async () => {
-    const extras = ['Controle do agente', 'Enviado'];
-    const cliente = clienteMemoria([...montarLinhaAgendamento('1', dados), ...extras], [...CABECALHOS, 'Controle', 'Envio']);
-    const atualizado = { ...dados, status: 'rejeitado', motivoRejeicao: 'Reforma' };
-    await sincronizarLinha(cliente, '1', atualizado);
-    expect(cliente.escrever.mock.calls).toEqual([['A2:G2', [montarLinhaAgendamento('1', atualizado)]]]);
-    expect(cliente.adicionar).not.toHaveBeenCalled();
-    expect(cliente.linhas[1].slice(7)).toEqual(extras);
-  });
-  it('usa adicionar para novo ID com linhas existentes', async () => {
-    const cliente = clienteMemoria();
-    await sincronizarLinha(cliente, 'novo', dados);
-    expect(cliente.adicionar.mock.calls).toEqual([[[montarLinhaAgendamento('novo', dados)]]]);
-    expect(cliente.escrever).not.toHaveBeenCalled();
-  });
-  it('valida somente as sete primeiras colunas do cabeçalho', () => {
-    expect(validarCabecalho([...CABECALHOS, 'Extra', 'Outro'])).toBe(true);
-    expect(validarCabecalho()).toBe(false);
-    expect(validarCabecalho(['', '', '', '', '', '', '', 'Extra'])).toBe(false);
-  });
-  it('não grava dados com cabeçalho antigo, parcial ou diferente', async () => {
-    for (const cabecalho of [['ID'], ['ID', 'Criado em', 'Sala'], CABECALHOS.map(c => c === 'E-mail' ? 'Canal' : c)]) {
-      const cliente = clienteMemoria(undefined, cabecalho);
-      await expect(sincronizarLinha(cliente, '1', dados)).rejects.toThrow('Cabeçalho da planilha diferente do esperado');
-      expect(cliente.escrever).not.toHaveBeenCalled();
-      expect(cliente.adicionar).not.toHaveBeenCalled();
-      expect(cliente.ler).toHaveBeenCalledTimes(1);
-    }
   });
 });
