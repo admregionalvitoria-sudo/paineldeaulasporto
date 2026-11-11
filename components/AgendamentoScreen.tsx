@@ -1,3 +1,4 @@
+import { dataBR, dataLocal } from '../utils/datas';
 import React, { useState, useContext, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DataContext } from '../context/DataContext';
@@ -48,12 +49,7 @@ const getHorarioPadrao = (turno: string) => {
     return { inicio: '18:00', fim: '22:00' };
 };
 
-const formatDateToBR = (date: Date): string => {
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const year = date.getFullYear();
-    return `${day}/${month}/${year}`;
-};
+const formatDateToBR = (date: Date): string => dataBR(dataLocal(date));
 
 const formatBRToDate = (dateStr: string): Date => {
     if (!dateStr || !dateStr.includes('/')) return new Date();

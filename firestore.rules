@@ -2,8 +2,53 @@ rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+    // Preserve the legacy collections while isolating the new administrative data.
+    match /{path=**}/{collection}/{id} {
+      allow read, write: if !(collection in ['agendaPorto', 'prioridadesLimpeza']);
+    }
+
+    function hasRole(roles) {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/porto/dados/usuarios/$(request.auth.uid))
+        && get(/databases/$(database)/documents/porto/dados/usuarios/$(request.auth.uid)).data.ativo == true
+        && get(/databases/$(database)/documents/porto/dados/usuarios/$(request.auth.uid)).data.role in roles;
+    }
+
+    function canManage() {
+      return hasRole(['super_admin', 'admin', 'coordenador']);
+    }
+
+    match /porto/dados/agendaPorto/{id} {
+      allow read: if hasRole(['super_admin', 'admin', 'coordenador', 'midia', 'comunicacao']);
+      allow create, update: if canManage()
+        && request.resource.data.titulo is string
+        && request.resource.data.titulo.size() > 0
+        && request.resource.data.titulo.size() <= 160
+        && request.resource.data.data.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.inicio.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+        && request.resource.data.fim.matches('^([01][0-9]|2[0-3]):[0-5][0-9]$')
+        && request.resource.data.fim > request.resource.data.inicio
+        && request.resource.data.local is string
+        && request.resource.data.local.size() <= 200
+        && request.resource.data.descricao is string
+        && request.resource.data.descricao.size() <= 2000
+        && request.resource.data.atualizadoPor == request.auth.uid;
+      allow delete: if canManage();
+    }
+
+    match /porto/dados/prioridadesLimpeza/{id} {
+      // The cleaning display is already a public screen.
+      allow read: if true;
+      allow create, update: if canManage()
+        && request.resource.data.sala is string
+        && request.resource.data.sala.size() > 0
+        && request.resource.data.data.matches('^[0-9]{4}-[0-9]{2}-[0-9]{2}$')
+        && request.resource.data.prioridade in ['normal', 'alta', 'urgente']
+        && request.resource.data.observacao is string
+        && request.resource.data.observacao.size() <= 1000
+        && request.resource.data.concluida is bool
+        && request.resource.data.atualizadoPor == request.auth.uid;
+      allow delete: if canManage();
     }
   }
 }

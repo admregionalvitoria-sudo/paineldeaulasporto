@@ -1,4 +1,10 @@
+import AdminSidebar, { type AdminTab } from './AdminSidebar';
+import useCurrentTime from '../hooks/useCurrentTime';
+import { dataLocal, dataBR, dataISO } from '../utils/datas';
+import { usosDoDia } from '../utils/limpeza';
 import { whatsappAutorizado, mascaraTelefone, normalizarTelefone } from '../utils/notificacaoAgendamento.mjs';
+import AgendaPorto from './AgendaPorto';
+import AlertasManagementSection from './AlertasManagementSection';
 import React, { useState, useContext, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DataContext, ExtendedDataContextType, normalizarNomeAmbiente, calcularTurnoPorHorario } from '../context/DataContext';
@@ -31,7 +37,13 @@ import {
   ArrowRight,
   Broom,
   MessageSquare,
-  ExternalLink
+  ExternalLink,
+  Menu,
+  ChevronLeft,
+  ChevronRight,
+  ClipboardList,
+  Bell,
+  BellRing
 } from 'lucide-react';
 
 interface AdminScreenProps {
@@ -666,7 +678,7 @@ const AgendamentosAdminSection: React.FC = () => {
         <h3 className="font-black text-[#0F2A52]">Aprovar solicitação — {itemAprovando.sala}</h3>
         <label className="block text-xs">Observação do gestor (opcional)<textarea value={observacaoAprovacao} onChange={e => setObservacaoAprovacao(e.target.value)} className="border rounded-xl p-3 w-full" /></label>
         {erroDecisao && <p role="alert" className="text-red-700 text-xs">{erroDecisao}</p>}
-        <div className="flex gap-3"><button onClick={() => setItemAprovando(null)}>Cancelar</button><button disabled={salvandoDecisao} onClick={() => handleAprovar(itemAprovando)} className="bg-emerald-600 text-white px-4 py-2 rounded-xl">Confirmar aprovação</button></div>
+        <div className="flex gap-3"><button onClick={() => setItemAprovando(null)}>Cancelar</button><button disabled={salvandoDecisao} onClick={() => handleAprovar(itemAprovando)} className="bg-emerald-600 text-white px-4 py-2 rounded-xl disabled:opacity-50">Confirmar aprovação</button></div>
       </div></div>}
       {/* Modal de Rejeição */}
       {itemRejeitando && (
@@ -811,18 +823,10 @@ const LimpezaManagementSection: React.FC<{ onNavigate?: (route: string) => void 
   const [savingSala, setSavingSala] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ sala: string; msg: string; tipo: 'sucesso' | 'erro' } | null>(null);
 
-  const todayStr = useMemo(() => {
-    const now = new Date();
-    const day = String(now.getDate()).padStart(2, '0');
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const year = now.getFullYear();
-    return `${day}/${month}/${year}`;
-  }, []);
-
+  useCurrentTime();
+  const todayStr = dataBR(dataLocal());
   const salas = context?.salasCadastradas || [];
-  const aulasHoje = useMemo(() => {
-    return (context?.aulas || []).filter(a => (a.data || '').trim() === todayStr);
-  }, [context?.aulas, todayStr]);
+  const aulasHoje = useMemo(() => usosDoDia(todayStr, context?.aulas || [], context?.agendamentos || [], context?.manutencoes || []), [context?.aulas, context?.agendamentos, context?.manutencoes, todayStr]);
 
   // Map das aulas de hoje por sala normalizada
   const aulasPorSala = useMemo(() => {
@@ -1149,9 +1153,12 @@ const LimpezaManagementSection: React.FC<{ onNavigate?: (route: string) => void 
 
 const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNavigate }) => {
   const context = useContext(DataContext) as ExtendedDataContextType;
-  const { usuarioAtual, logout } = useAuth();
+  const { usuarioAtual, logout, temPermissao } = useAuth();
 
-  const [adminTab, setAdminTab] = useState<'aulas' | 'ambientes' | 'agendamentos' | 'limpeza'>('aulas');
+  const [adminTab, setAdminTab] = useState<AdminTab>('aulas');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const { formattedDate } = useCurrentTime();
   const [editingAula, setEditingAula] = useState<Aula | null>(null);
   const [addingAula, setAddingAula] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -1171,27 +1178,40 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
     }
   };
 
-  const getTodayFormatted = () => {
-    const now = new Date();
-    const day = String(now.getDate()).padStart(2, '0');
-    const month = String(now.getMonth() + 1).padStart(2, '0');
-    const year = now.getFullYear();
-    return `${day}/${month}/${year}`;
-  };
+  const getTodayFormatted = () => dataBR(dataLocal());
 
-  const filteredAulasAdmin = useMemo(() => {
-    return context.aulas.filter(aula => {
+  const { currentAulas, historicoAulas, filteredAulasAdmin } = useMemo(() => {
+    const todayIso = dataLocal();
+
+    const current = context.aulas.filter(aula => dataISO(aula.data) >= todayIso);
+    const past = context.aulas.filter(aula => dataISO(aula.data) < todayIso);
+
+    const filtered = context.aulas.filter(aula => {
       const matchesDate = !searchDate || aula.data.includes(searchDate);
       const matchesTurma = !searchTurma || aula.turma.toLowerCase().includes(searchTurma.toLowerCase());
       const matchesInstrutor = !searchInstrutor || aula.instrutor.toLowerCase().includes(searchInstrutor.toLowerCase());
       const matchesShift = !filterShift || (aula.turno && aula.turno.toLowerCase() === filterShift.toLowerCase());
       
-      return matchesDate && matchesTurma && matchesInstrutor && matchesShift;
+      const isPast = dataISO(aula.data) < todayIso;
+
+      if (adminTab === 'historico') {
+        return matchesDate && matchesTurma && matchesInstrutor && matchesShift && isPast;
+      } else {
+        return matchesDate && matchesTurma && matchesInstrutor && matchesShift && !isPast;
+      }
     });
-  }, [context.aulas, searchDate, searchTurma, searchInstrutor, filterShift]);
+
+    return { currentAulas: current, historicoAulas: past, filteredAulasAdmin: filtered };
+  }, [context.aulas, searchDate, searchTurma, searchInstrutor, filterShift, adminTab, formattedDate]);
 
   return (
-    <div className="min-h-screen bg-[#EDF1F6] text-[#0F2A52] p-4 sm:p-8 font-sans relative">
+    <div className="min-h-screen bg-[#EDF1F6] text-[#0F2A52] font-sans relative lg:flex">
+      <AdminSidebar activeTab={adminTab} onTab={tab => { setAdminTab(tab); setMobileMenuOpen(false); }}
+        onNavigate={route => onNavigate ? onNavigate(route) : window.location.assign(`/${route}`)}
+        onReturn={onReturnToDashboard} collapsed={sidebarCollapsed} onCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
+        mobileOpen={mobileMenuOpen} onMobileToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
+        counts={{ aulas: currentAulas.length, historico: historicoAulas.length, ambientes: context.salasCadastradas.length, agendamentos: pendentesCount, limpeza: Object.values(context.observacoesLimpeza || {}).filter(o => o.observacao).length, alertas: context.alertas.filter(a => a.ativo).length }} />
+      <div className={`flex-1 flex flex-col p-4 sm:p-8 min-w-0 ${sidebarCollapsed ? 'lg:ml-24' : 'lg:ml-64'}`}>
       <AnimatePresence>
         {editingAula && (
           <EditModal 
@@ -1216,144 +1236,126 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
       </AnimatePresence>
       
       {/* Top Header */}
-      <header className="flex flex-col lg:flex-row justify-between items-start lg:items-center mb-8 gap-6 max-w-[2000px] mx-auto bg-white p-6 rounded-3xl border border-[#E5E7EB] shadow-xs">
-        <div>
-          <div className="flex items-center gap-2">
-            <span className="text-[10px] font-black uppercase tracking-[0.3em] text-[#F4901E]">SENAI • PAINEL ADMINISTRATIVO</span>
-            <span className="px-2 py-0.5 rounded-full text-[9px] font-black bg-blue-50 text-[#0F2A52] border border-blue-200">
-              {usuarioAtual?.email || 'admin@senai.br'}
-            </span>
+      <header className="mb-6 max-w-[2000px] w-full mx-auto relative px-2">
+
+        {/* Notificação Piscante de Alertas */}
+        {context.alertas?.some(a => a.ativo) && (
+          <div className="mb-4 rounded-xl w-full bg-red-600 text-white text-xs font-bold uppercase tracking-widest py-3 px-4 flex items-center justify-center gap-2 animate-pulse shadow-md z-10 cursor-pointer" onClick={() => setAdminTab('alertas')}>
+            <BellRing className="w-5 h-5 animate-bounce" />
+            Você tem alertas importantes não lidos! Clique aqui.
           </div>
-          <h1 className="text-2xl sm:text-3xl font-black uppercase tracking-tight text-[#0F2A52] mt-1">
-            Gestão de Horários & Ambientes
-          </h1>
-        </div>
+        )}
 
-        {/* Links Rápidos e Ações */}
-        <div className="flex flex-wrap items-center gap-2.5">
-          <button
-            onClick={() => onNavigate ? onNavigate('midia') : (window.location.pathname = '/midia')}
-            className="bg-[#0F2A52] text-white px-4 py-2.5 rounded-xl font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-[#1D4E8C] transition-all shadow-xs"
-          >
-            <ImageIcon className="w-4 h-4 text-red-400" />
-            <span>Mídias & TV</span>
-          </button>
-
-          <button
-            onClick={() => onNavigate ? onNavigate('usuarios') : (window.location.pathname = '/usuarios')}
-            className="bg-white border border-[#CBD5E1] text-[#0F2A52] px-4 py-2.5 rounded-xl font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-[#F1F5F9] transition-all shadow-xs"
-          >
-            <Users className="w-4 h-4 text-[#F4901E]" />
-            <span>Usuários</span>
-          </button>
-
-          <button
-            onClick={() => onNavigate ? onNavigate('logs') : (window.location.pathname = '/logs')}
-            className="bg-white border border-[#CBD5E1] text-[#0F2A52] px-4 py-2.5 rounded-xl font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-[#F1F5F9] transition-all shadow-xs"
-          >
-            <ShieldCheck className="w-4 h-4 text-emerald-600" />
-            <span>Logs</span>
-          </button>
-
-          <button
-            onClick={() => onNavigate ? onNavigate('agendamento') : (window.location.pathname = '/agendamento')}
-            className="bg-white border border-[#CBD5E1] text-[#0F2A52] px-4 py-2.5 rounded-xl font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-[#F1F5F9] transition-all shadow-xs"
-          >
-            <Calendar className="w-4 h-4 text-blue-600" />
-            <span>Agendamento</span>
-          </button>
-
-          <button
-            onClick={() => onNavigate ? onNavigate('painelcliente') : (window.location.pathname = '/painelcliente')}
-            className="bg-white border border-[#CBD5E1] text-[#0F2A52] px-4 py-2.5 rounded-xl font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-[#F1F5F9] transition-all shadow-xs"
-            title="Abrir Painel de Vídeo para Clientes / Recepção"
-          >
-            <Layers className="w-4 h-4 text-purple-600" />
-            <span>Painel Cliente</span>
-          </button>
-
-          <button
-            onClick={() => onNavigate ? onNavigate('limpeza') : (window.location.pathname = '/limpeza')}
-            className="bg-white border border-[#CBD5E1] text-[#0F2A52] px-4 py-2.5 rounded-xl font-bold uppercase text-[10px] flex items-center gap-2 hover:bg-[#F1F5F9] transition-all shadow-xs"
-            title="Abrir Painel Operacional de Limpeza"
-          >
-            <Broom className="w-4 h-4 text-[#1D4E8C]" />
-            <span>Painel Limpeza</span>
-          </button>
-
-          <button 
-            onClick={logout} 
-            title="Encerrar Sessão" 
-            className="p-2.5 bg-red-50 text-red-600 hover:bg-red-600 hover:text-white rounded-xl transition-colors border border-red-200 cursor-pointer"
-          >
-            <LogOut className="w-4 h-4" />
-          </button>
+        <div className={`flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 ${context.alertas?.some(a => a.ativo) ? "mt-2" : ""}`}>
+          <div>
+            <div className="flex items-center gap-3 mb-1.5">
+              <span className="text-[11px] font-black uppercase tracking-[0.3em] text-[#F4901E]">SENAI • PAINEL ADMINISTRATIVO</span>
+              <span className="px-2.5 py-1 rounded-full text-[10px] font-black tracking-wider bg-[#0F2A52]/10 text-[#0F2A52]">
+                {usuarioAtual?.email || 'admin@senai.br'}
+              </span>
+            </div>
+            <h1 className="text-3xl sm:text-4xl font-black uppercase tracking-tighter text-[#0F2A52]">
+              Gestão de Horários & Ambientes
+            </h1>
+          </div>
         </div>
       </header>
 
-      {/* Main Container com as 3 Abas */}
-      <main className="max-w-[2000px] mx-auto bg-white p-6 sm:p-8 rounded-3xl border border-[#E5E7EB] shadow-lg">
-        {/* Navegação de Abas */}
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-8 border-b border-[#E5E7EB] pb-4">
-          <div className="flex flex-wrap bg-[#F1F5F9] p-1.5 rounded-2xl gap-2">
-            <button
-              onClick={() => setAdminTab('aulas')}
-              className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
-                adminTab === 'aulas'
-                  ? 'bg-white text-[#0F2A52] shadow-sm'
-                  : 'text-[#64748B] hover:text-[#0F2A52]'
-              }`}
-            >
-              <Clock className="w-4 h-4 text-[#1D4E8C]" />
-              <span>Cronograma de Aulas ({context.aulas.length})</span>
-            </button>
+      {/* Main Content Area */}
+      <div className="max-w-[2000px] w-full mx-auto flex flex-col lg:flex-row gap-6 items-start">
+        <main className="flex-1 min-w-0 bg-white p-6 sm:p-8 rounded-3xl border border-[#E5E7EB] shadow-lg">
+          {/* Categorias / Navegação de Abas - Voltaram para o Topo */}
+          <div className="flex flex-wrap items-center justify-between gap-4 mb-8 border-b border-[#E5E7EB] pb-4">
+            <div className="flex flex-wrap bg-[#F1F5F9] p-1.5 rounded-2xl gap-2">
+              <button
+                onClick={() => setAdminTab('aulas')}
+                className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+                  adminTab === 'aulas'
+                    ? 'bg-white text-[#0F2A52] shadow-sm'
+                    : 'text-[#64748B] hover:text-[#0F2A52]'
+                }`}
+              >
+                <Clock className="w-4 h-4 text-[#1D4E8C]" />
+                <span>Cronograma ({currentAulas.length})</span>
+              </button>
 
-            <button
-              onClick={() => setAdminTab('ambientes')}
-              className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
-                adminTab === 'ambientes'
-                  ? 'bg-white text-[#0F2A52] shadow-sm'
-                  : 'text-[#64748B] hover:text-[#0F2A52]'
-              }`}
-            >
-              <DoorOpen className="w-4 h-4 text-[#F4901E]" />
-              <span>Gestão de Ambientes ({context.salasCadastradas.length})</span>
-            </button>
-
-            <button
-              onClick={() => setAdminTab('agendamentos')}
-              className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 relative ${
-                adminTab === 'agendamentos'
-                  ? 'bg-white text-[#0F2A52] shadow-sm'
-                  : 'text-[#64748B] hover:text-[#0F2A52]'
-              }`}
-            >
-              <Building className="w-4 h-4 text-[#F4901E]" />
-              <span>Solicitações de Salas</span>
-              {pendentesCount > 0 && (
-                <span className="bg-amber-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-xs">
-                  {pendentesCount}
-                </span>
+              {temPermissao(['admin']) && (
+                <button
+                  onClick={() => setAdminTab('historico')}
+                  className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+                    adminTab === 'historico'
+                      ? 'bg-white text-[#0F2A52] shadow-sm'
+                      : 'text-[#64748B] hover:text-[#0F2A52]'
+                  }`}
+                >
+                  <ClipboardList className="w-4 h-4 text-[#1D4E8C]" />
+                  <span>Histórico ({historicoAulas.length})</span>
+                </button>
               )}
-            </button>
 
-            <button
-              onClick={() => setAdminTab('limpeza')}
-              className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 relative ${
-                adminTab === 'limpeza'
-                  ? 'bg-white text-[#0F2A52] shadow-sm'
-                  : 'text-[#64748B] hover:text-[#0F2A52]'
-              }`}
-            >
-              <Broom className="w-4 h-4 text-[#1D4E8C]" />
-              <span>Limpeza & Observações</span>
-              {Object.keys(context.observacoesLimpeza || {}).filter(k => !!context.observacoesLimpeza?.[k]?.observacao).length > 0 && (
-                <span className="bg-[#F4901E] text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-xs">
-                  {Object.keys(context.observacoesLimpeza || {}).filter(k => !!context.observacoesLimpeza?.[k]?.observacao).length}
-                </span>
-              )}
-            </button>
-          </div>
+              <button
+                onClick={() => setAdminTab('ambientes')}
+                className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
+                  adminTab === 'ambientes'
+                    ? 'bg-white text-[#0F2A52] shadow-sm'
+                    : 'text-[#64748B] hover:text-[#0F2A52]'
+                }`}
+              >
+                <DoorOpen className="w-4 h-4 text-[#F4901E]" />
+                <span>Gestão de Ambientes ({context.salasCadastradas.length})</span>
+              </button>
+
+              <button
+                onClick={() => setAdminTab('agendamentos')}
+                className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 relative ${
+                  adminTab === 'agendamentos'
+                    ? 'bg-white text-[#0F2A52] shadow-sm'
+                    : 'text-[#64748B] hover:text-[#0F2A52]'
+                }`}
+              >
+                <Building className="w-4 h-4 text-[#F4901E]" />
+                <span>Solicitações de Salas</span>
+                {pendentesCount > 0 && (
+                  <span className="bg-amber-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-xs">
+                    {pendentesCount}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setAdminTab('limpeza')}
+                className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 relative ${
+                  adminTab === 'limpeza'
+                    ? 'bg-white text-[#0F2A52] shadow-sm'
+                    : 'text-[#64748B] hover:text-[#0F2A52]'
+                }`}
+              >
+                <Broom className="w-4 h-4 text-[#1D4E8C]" />
+                <span>Limpeza & Observações</span>
+                {Object.keys(context.observacoesLimpeza || {}).filter(k => !!context.observacoesLimpeza?.[k]?.observacao).length > 0 && (
+                  <span className="bg-[#F4901E] text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-xs">
+                    {Object.keys(context.observacoesLimpeza || {}).filter(k => !!context.observacoesLimpeza?.[k]?.observacao).length}
+                  </span>
+                )}
+              </button>
+
+              <button
+                onClick={() => setAdminTab('alertas')}
+                className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 relative ${
+                  adminTab === 'alertas'
+                    ? 'bg-red-600 text-white shadow-sm'
+                    : 'text-[#64748B] hover:text-red-600'
+                }`}
+              >
+                {context.alertas?.some(a => a.ativo) ? <BellRing className="w-4 h-4 animate-bounce text-red-500" /> : <Bell className="w-4 h-4" />}
+                <span>Alertas</span>
+                {context.alertas?.filter(a => a.ativo).length > 0 && (
+                  <span className="bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-xs">
+                    {context.alertas.filter(a => a.ativo).length}
+                  </span>
+                )}
+              </button>
+            </div>
 
           {adminTab === 'aulas' && (
             <div className="flex flex-wrap items-center gap-3">
@@ -1383,6 +1385,17 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
               </button>
             </div>
           )}
+
+          {adminTab === 'historico' && (
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                onClick={() => context.clearAulasHistory()}
+                className="bg-red-50 text-red-600 border border-red-200 px-4 py-2.5 rounded-xl font-black uppercase text-[10px] flex items-center gap-1.5 hover:bg-red-600 hover:text-white transition-all"
+              >
+                <Trash2 className="w-4 h-4" /> Limpar Histórico (+3 meses)
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Conteúdo Conforme a Aba */}
@@ -1392,6 +1405,8 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
           <AgendamentosAdminSection />
         ) : adminTab === 'limpeza' ? (
           <LimpezaManagementSection onNavigate={onNavigate} />
+        ) : adminTab === 'alertas' ? (
+          <AlertasManagementSection hideForm={true} />
         ) : (
           /* Aba de Aulas & Cronograma */
           <div>
@@ -1506,7 +1521,14 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
                       <td className="py-3 px-4 font-semibold text-[#0F2A52] max-w-[200px] truncate">
                         {aula.turma}
                       </td>
-                      <td className="py-3 px-4 text-[#475569]">{aula.instrutor}</td>
+                      <td className="py-3 px-4 text-[#475569]">
+                        {aula.instrutor}
+                        {aula.modificadoManualmente && (
+                          <span title="Modificado manualmente pelo painel" className="ml-1.5 inline-flex items-center text-[#F4901E] bg-amber-50 p-1 rounded">
+                            <Edit3 className="w-3 h-3" />
+                          </span>
+                        )}
+                      </td>
                       <td className="py-3 px-4 text-[#64748B] max-w-[220px] truncate" title={aula.unidade_curricular ? formatarUnidadeCurricular(aula.unidade_curricular) : '—'}>
                         {aula.unidade_curricular ? formatarUnidadeCurricular(aula.unidade_curricular) : '—'}
                       </td>
@@ -1557,6 +1579,15 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
           </div>
         )}
       </main>
+
+      {/* Right Sidebar - Agenda */}
+      <aside className="w-full lg:w-[360px] shrink-0">
+        <div className="sticky top-6">
+          <AgendaPorto inline={true} />
+        </div>
+      </aside>
+      </div>
+    </div>
     </div>
   );
 };

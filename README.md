@@ -52,3 +52,7 @@ View your app in AI Studio: https://ai.studio/apps/2689532b-33ff-41af-8605-6fb2e
 - `/painelcliente`: Painel institucional para recepção e clientes.
 - `/midia`: Gestão de mídias e avisos rotativos da TV.
 - `/agendamento`: Solicitação pública de agendamento de ambientes.
+
+- `/administrativo`: prioridades de limpeza e publicação de compromissos na Agenda do Porto. [Detalhes e permissões](docs/administrativo.md).
+
+A navegação administrativa inclui Histórico, Alertas e Ambientes e manutenção. A reimportação preserva o histórico e os ajustes manuais, inclusive aulas criadas por reservas. Consulte as [regras da fila de limpeza e importação](docs/limpeza-regras.md).

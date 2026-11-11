@@ -1,7 +1,9 @@
+import { planejarImportacaoAulas } from '../utils/importacaoAulas';
+import { dataLocal, dataISO } from '../utils/datas';
 import { validarContatoAgendamento, normalizarTelefone, whatsappAutorizado } from '../utils/notificacaoAgendamento.mjs';
 import React, { createContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { upload as vercelBlobUpload } from '@vercel/blob/client';
-import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType, AuditAction, PainelClienteConfig, ObservacaoLimpeza, ManutencaoAmbiente } from '../types';
+import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType, AuditAction, PainelClienteConfig, ObservacaoLimpeza, ManutencaoAmbiente, Alerta } from '../types';
 import { db, storage, auth } from '../firebase';
 import { formatarUnidadeCurricular } from '../utils/curricularUnits';
 import { formatarNomeSala, CANONICAL_SALAS } from '../utils/roomFormatter';
@@ -198,6 +200,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const [ambientesPersonalizados, setAmbientesPersonalizados] = useState<{ id: string; nome: string }[]>([]);
   const [painelClienteConfig, setPainelClienteConfig] = useState<PainelClienteConfig>(DEFAULT_PAINEL_CLIENTE_CONFIG);
   const [observacoesLimpeza, setObservacoesLimpeza] = useState<Record<string, ObservacaoLimpeza>>({});
+  const [alertas, setAlertas] = useState<Alerta[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [syncSource, setSyncSource] = useState<string | null>(null);
@@ -352,6 +355,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const agendamentosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos');
     const ambientesCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'ambientes');
     const limpezaCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'limpeza');
+    const alertasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'alertas');
     const metaDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'sync');
 
     const unsubMeta = onSnapshot(metaDocRef, (docSnap) => {
@@ -538,6 +542,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.warn("Aviso listener limpeza:", err);
     });
 
+    const unsubAlertas = onSnapshot(alertasCollectionRef, (snapshot) => {
+      const alertasData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as Alerta[];
+      alertasData.sort((a, b) => {
+        const timeA = a.criadoEm?.toMillis?.() || 0;
+        const timeB = b.criadoEm?.toMillis?.() || 0;
+        return timeB - timeA;
+      });
+      setAlertas(alertasData);
+    }, (err) => {
+      console.error("Erro listener alertas:", err);
+    });
+
     return () => {
       unsubMeta();
       unsubAmbientes();
@@ -548,6 +564,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       unsubManutencoes();
       unsubPainelCliente();
       unsubLimpeza();
+      unsubAlertas();
       clearTimeout(reloadTimeoutRef.current);
     };
   }, []);
@@ -867,6 +884,94 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }).filter(a => !!a);
   };
 
+  const persistirAulasImportadas = async (dados: Omit<Aula, 'id'>[], nomeArquivo: string) => {
+      // Desduplicação rigorosa: impede turmas duplicadas no mesmo ambiente/data/turno
+      const uniqueAulasMap = new Map<string, Omit<Aula, 'id'>>();
+      dados.forEach(aula => {
+        const normSala = normalizarNomeAmbiente(aula.sala);
+        const key = `${aula.data}|${aula.turno}|${normSala}`;
+        if (!uniqueAulasMap.has(key)) {
+          uniqueAulasMap.set(key, aula);
+        }
+      });
+      const uniqueAulas = Array.from(uniqueAulasMap.values());
+
+      if (uniqueAulas.length === 0) {
+        throw new Error("Nenhuma aula válida ou não duplicada encontrada no arquivo.");
+      }
+      if (!uniqueAulas.some(a => dataISO(a.data) >= dataLocal())) {
+        throw new Error('O CSV não contém aulas de hoje em diante para importar.');
+      }
+
+      const aulasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
+      const CHUNK_SIZE = 490;
+
+      const currentDocs = await getDocs(aulasCollectionRef);
+      const plano = planejarImportacaoAulas(currentDocs.docs.map(d => ({ ...d.data(), id: d.id } as Aula)), uniqueAulas, dataLocal());
+      const futureAulasFromCsv = plano.inserir;
+      const excluirIds = new Set(plano.excluirIds);
+
+      const deletePromises: Promise<void>[] = [];
+      let deleteBatch = writeBatch(db);
+      let deleteCount = 0;
+
+      currentDocs.forEach((d) => {
+          // Histórico e ajustes manuais não entram no plano de exclusão.
+          if (excluirIds.has(d.id)) {
+            deleteBatch.delete(d.ref);
+            deleteCount++;
+            if (deleteCount === CHUNK_SIZE) {
+                deletePromises.push(deleteBatch.commit());
+                deleteBatch = writeBatch(db);
+                deleteCount = 0;
+            }
+          }
+      });
+
+      if (deleteCount > 0) {
+          deletePromises.push(deleteBatch.commit());
+      }
+      await Promise.all(deletePromises);
+
+      const addPromises: Promise<void>[] = [];
+      let addBatch = writeBatch(db);
+      let addCount = 0;
+
+      futureAulasFromCsv.forEach((aula, index) => {
+        const newDocRef = doc(aulasCollectionRef);
+        const aulaComOrdem = { ...aula, ordem: index };
+        addBatch.set(newDocRef, aulaComOrdem);
+        addCount++;
+        if (addCount === CHUNK_SIZE) {
+          addPromises.push(addBatch.commit());
+          addBatch = writeBatch(db);
+          addCount = 0;
+        }
+      });
+      if (addCount > 0) {
+        addPromises.push(addBatch.commit());
+      }
+      await Promise.all(addPromises);
+
+      const metaDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'sync');
+      await setDoc(metaDocRef, {
+        updatedAt: serverTimestamp(),
+        timestamp: Date.now(),
+        totalAulas: futureAulasFromCsv.length,
+        source: nomeArquivo
+      }, { merge: true });
+
+      await registrarLog(
+        'IMPORTAR_CSV',
+        'csv',
+        nomeArquivo,
+        `Planilha importada com ${futureAulasFromCsv.length} aulas. ${plano.preservadas} ajustes manuais e ${plano.historicas} aulas históricas preservados.`
+      );
+
+      setSyncSource(nomeArquivo);
+      alert(`${futureAulasFromCsv.length} aulas sincronizadas! ${plano.preservadas} aulas com ajustes manuais preservadas. ${plano.historicas} aulas históricas preservadas.`);
+  };
+
   const uploadCSV = async (file: File) => {
     setLoading(true);
     setError(null);
@@ -888,80 +993,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       const processed = processCSVData(jsonData);
 
-      // Desduplicação rigorosa: impede turmas duplicadas no mesmo ambiente/data/turno
-      const uniqueAulasMap = new Map<string, Omit<Aula, 'id'>>();
-      processed.forEach(aula => {
-        const normSala = normalizarNomeAmbiente(aula.sala);
-        const key = `${aula.data}|${aula.turno}|${normSala}`;
-        if (!uniqueAulasMap.has(key)) {
-          uniqueAulasMap.set(key, aula);
-        }
-      });
-      const uniqueAulas = Array.from(uniqueAulasMap.values());
-      
-      if (uniqueAulas.length === 0) {
-        throw new Error("Nenhuma aula válida ou não duplicada encontrada no arquivo.");
-      }
-      
-      const aulasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
-      const CHUNK_SIZE = 490;
-
-      const currentDocs = await getDocs(aulasCollectionRef);
-      const deletePromises: Promise<void>[] = [];
-      let deleteBatch = writeBatch(db);
-      let deleteCount = 0;
-      
-      currentDocs.forEach((d) => {
-          deleteBatch.delete(d.ref);
-          deleteCount++;
-          if (deleteCount === CHUNK_SIZE) {
-              deletePromises.push(deleteBatch.commit());
-              deleteBatch = writeBatch(db);
-              deleteCount = 0;
-          }
-      });
-      if (deleteCount > 0) {
-          deletePromises.push(deleteBatch.commit());
-      }
-      await Promise.all(deletePromises);
-
-      const addPromises: Promise<void>[] = [];
-      let addBatch = writeBatch(db);
-      let addCount = 0;
-
-      uniqueAulas.forEach((aula, index) => {
-        const newDocRef = doc(aulasCollectionRef);
-        const aulaComOrdem = { ...aula, ordem: index };
-        addBatch.set(newDocRef, aulaComOrdem);
-        addCount++;
-        if (addCount === CHUNK_SIZE) {
-          addPromises.push(addBatch.commit());
-          addBatch = writeBatch(db);
-          addCount = 0;
-        }
-      });
-      if (addCount > 0) {
-        addPromises.push(addBatch.commit());
-      }
-      await Promise.all(addPromises);
-
-      const metaDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'sync');
-      await setDoc(metaDocRef, {
-        updatedAt: serverTimestamp(),
-        timestamp: Date.now(),
-        totalAulas: uniqueAulas.length,
-        source: file.name
-      }, { merge: true });
-
-      await registrarLog(
-        'IMPORTAR_CSV',
-        'csv',
-        file.name,
-        `Planilha ${file.name} importada com ${uniqueAulas.length} aulas sem duplicidades de ambientes`
-      );
-
-      setSyncSource(file.name);
-      alert(`${uniqueAulas.length} aulas sincronizadas com sucesso! Conflitos e duplicidades de salas foram eliminados.`);
+      await persistirAulasImportadas(processed, file.name);
     } catch (e: any) {
       setError(e.message);
       alert("Erro ao processar arquivo: " + e.message);
@@ -986,7 +1018,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         throw new Error(msg);
       }
 
-      const sanitizedAula: Partial<Aula> = { ...aula, turno: novoTurno };
+      const sanitizedAula: Partial<Aula> = { ...aula, turno: novoTurno, modificadoManualmente: true };
       if (sanitizedAula.sala) {
         sanitizedAula.sala = formatarNomeSala(sanitizedAula.sala);
       }
@@ -1049,6 +1081,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const formattedUC = formatarUnidadeCurricular(aulaData.unidade_curricular);
       const newAula = {
         ...aulaData,
+        modificadoManualmente: true,
+        origem: aulaData.origem === 'reserva' ? 'reserva' : 'manual',
         sala: formattedSala,
         turno: turnoCalculado,
         unidade_curricular: formattedUC,
@@ -1074,7 +1108,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
-  const updateAulasFromCSV = () => {};
+  const updateAulasFromCSV = async (dados: Omit<Aula, 'id'>[]) => {
+    setLoading(true);
+    setError(null);
+    try { await persistirAulasImportadas(dados, 'Importacao CSV'); }
+    catch (e: any) { setError(e.message); throw e; }
+    finally { setLoading(false); }
+  };
 
   const clearAulas = async () => {
     if (confirm("Limpar todas as aulas do cronograma?")) {
@@ -1130,6 +1170,44 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.warn('Falha na sincronização do agendamento com a planilha');
       const mensagem = erro.name === 'TimeoutError' ? 'Tempo limite ao sincronizar planilha' : erro.message || 'Falha ao sincronizar planilha';
       await updateDoc(referencia, { planilhaSyncErro: mensagem, planilhaSyncEm: serverTimestamp() }).catch(() => console.warn('Falha ao registrar diagnóstico de sincronização'));
+    }
+  };
+
+  const clearAulasHistory = async () => {
+    if (confirm("Tem certeza que deseja apagar o histórico de aulas com mais de 3 meses de antiguidade?")) {
+        const aulasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
+        const currentDocs = await getDocs(aulasCollectionRef);
+        const CHUNK_SIZE = 490;
+        const deletePromises: Promise<void>[] = [];
+        let deleteBatch = writeBatch(db);
+        let deleteCount = 0;
+
+        const threeMonthsAgo = new Date();
+        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+        const thresholdIso = dataLocal(threeMonthsAgo);
+
+        currentDocs.forEach((d) => {
+            const aulaData = d.data() as Aula;
+            if (dataISO(aulaData.data) < thresholdIso) {
+                deleteBatch.delete(d.ref);
+                deleteCount++;
+                if (deleteCount === CHUNK_SIZE) {
+                    deletePromises.push(deleteBatch.commit());
+                    deleteBatch = writeBatch(db);
+                    deleteCount = 0;
+                }
+            }
+        });
+        if (deleteCount > 0) {
+            deletePromises.push(deleteBatch.commit());
+        }
+        await Promise.all(deletePromises);
+
+        const metaDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'sync');
+        await setDoc(metaDocRef, { updatedAt: serverTimestamp(), timestamp: Date.now() }, { merge: true });
+
+        await registrarLog('LIMPAR_HISTORICO', 'aulas', 'todas', 'Histórico de aulas com mais de 3 meses foi removido');
+        alert("Histórico antigo limpo com sucesso!");
     }
   };
 
@@ -1189,6 +1267,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const conflito = verificarConflitoAmbiente(agendamento.sala, agendamento.data, agendamento.turno);
         if (!conflito) {
           await addAula({
+            origem: 'reserva',
             data: agendamento.data,
             sala: agendamento.sala,
             turma: agendamento.turma || `Reserva - ${agendamento.solicitante}`,
@@ -1348,15 +1427,51 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     await salvarObservacaoLimpeza(sala, '');
   };
 
+  const criarAlerta = async (mensagem: string) => {
+    try {
+      const alertasColl = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'alertas');
+      const user = auth.currentUser;
+      const criadoPor = user?.email || 'admin';
+
+      await addDoc(alertasColl, {
+        mensagem,
+        ativo: true,
+        criadoPor,
+        criadoEm: serverTimestamp()
+      });
+      await registrarLog('CRIAR_ALERTA', 'alerta', 'novo', `Alerta enviado: "${mensagem}"`);
+    } catch (err: any) {
+      console.error("Erro ao criar alerta:", err);
+      throw new Error("Erro ao disparar o alerta.");
+    }
+  };
+
+  const marcarAlertaLido = async (id: string) => {
+    try {
+      const user = auth.currentUser;
+      const lidoPor = user?.email || 'usuario';
+      const alertaDoc = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'alertas', id);
+      await updateDoc(alertaDoc, {
+        ativo: false,
+        lidoPor,
+        lidoEm: serverTimestamp()
+      });
+      await registrarLog('LIDO_ALERTA', 'alerta', id, `Alerta marcado como lido por ${lidoPor}`);
+    } catch (err) {
+      console.error("Erro ao marcar alerta como lido:", err);
+    }
+  };
+
   return (
     <DataContext.Provider value={{ 
       manutencoes, bloquearAmbienteManutencao, liberarAmbienteManutencao,
-      aulas, anuncios, alunos, agendamentos, salasCadastradas, painelClienteConfig, observacoesLimpeza, loading, error, isOffline,
+      aulas, anuncios, alunos, agendamentos, salasCadastradas, painelClienteConfig, observacoesLimpeza, alertas, loading, error, isOffline,
       addAula, updateAulasFromCSV, updateAula, deleteAula, 
-      clearAulas, addAnuncio, deleteAnuncio, replaceAnuncio, reorderAnuncios, clearAllAnuncios,
+      clearAulas, clearAulasHistory, addAnuncio, deleteAnuncio, replaceAnuncio, reorderAnuncios, clearAllAnuncios,
       uploadMediaFile, uploadCSV, syncSource, updatePainelClienteConfig,
       solicitarAgendamento, aprovarAgendamento, rejeitarAgendamento, excluirAgendamento,
-      adicionarAmbiente, excluirAmbiente, salvarObservacaoLimpeza, removerObservacaoLimpeza, registrarLog
+      adicionarAmbiente, excluirAmbiente, salvarObservacaoLimpeza, removerObservacaoLimpeza,
+      criarAlerta, marcarAlertaLido, registrarLog
     }}>
       {children}
     </DataContext.Provider>

@@ -17,6 +17,8 @@ export interface Aula {
   ordem?: number;
   ativa?: boolean;
   criadaEm?: any;
+  modificadoManualmente?: boolean;
+  origem?: 'manual' | 'reserva' | 'csv';
 }
 
 export interface Anuncio {
@@ -110,6 +112,16 @@ export interface ManutencaoAmbiente {
   criadoEm?: any;
 }
 
+export interface Alerta {
+  id: string;
+  mensagem: string;
+  ativo: boolean;
+  criadoPor: string;
+  criadoEm?: any;
+  lidoPor?: string;
+  lidoEm?: any;
+}
+
 export interface DataContextType {
   manutencoes: ManutencaoAmbiente[];
   bloquearAmbienteManutencao: (sala: string, motivo: string, inicio: string, fim?: string) => Promise<void>;
@@ -122,15 +134,17 @@ export interface DataContextType {
   ambientesPersonalizados?: string[];
   painelClienteConfig?: PainelClienteConfig;
   observacoesLimpeza?: Record<string, ObservacaoLimpeza>;
+  alertas: Alerta[];
   loading: boolean;
   error: string | null;
   isOffline?: boolean;
   syncSource?: string | null;
   addAula: (aula: Omit<Aula, 'id'>) => Promise<void>;
-  updateAulasFromCSV: (data: Omit<Aula, 'id'>[]) => void;
+  updateAulasFromCSV: (data: Omit<Aula, 'id'>[]) => Promise<void>;
   updateAula: (id: string, aula: Partial<Aula>) => Promise<void>;
   deleteAula: (id: string) => Promise<void>;
   clearAulas: () => void;
+  clearAulasHistory: () => Promise<void>;
   addAnuncio: (anuncio: Omit<Anuncio, 'id'>) => Promise<void>;
   deleteAnuncio: (id: string, storagePath?: string) => Promise<void>;
   replaceAnuncio: (id: string, newAnuncio: Omit<Anuncio, 'id'>, oldStoragePath?: string) => Promise<void>;
@@ -146,6 +160,8 @@ export interface DataContextType {
   excluirAmbiente: (nome: string) => Promise<void>;
   salvarObservacaoLimpeza?: (sala: string, observacao: string) => Promise<void>;
   removerObservacaoLimpeza?: (sala: string) => Promise<void>;
+  criarAlerta: (mensagem: string) => Promise<void>;
+  marcarAlertaLido: (id: string) => Promise<void>;
   registrarLog: (acao: AuditAction, entidadeTipo: string, entidadeId: string, detalhes?: string, antes?: any, depois?: any) => Promise<void>;
 }
 
@@ -180,6 +196,8 @@ export type AuditAction =
   | 'APROVAR_AGENDAMENTO' 
   | 'REJEITAR_AGENDAMENTO' 
   | 'CRIAR_AMBIENTE'
+  | 'CRIAR_ALERTA'
+  | 'LIDO_ALERTA'
   | string;
 
 export interface LogEntry {

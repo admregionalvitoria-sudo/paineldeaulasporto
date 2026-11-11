@@ -1,3 +1,4 @@
+import AgendaPorto from './AgendaPorto';
 import React, { useState, useContext, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DataContext, ExtendedDataContextType, DEFAULT_PAINEL_CLIENTE_CONFIG } from '../context/DataContext';
@@ -290,6 +291,7 @@ const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
           </div>
         </div>
 
+        <AgendaPorto />
         {/* Seletor de Abas */}
         <div className="flex bg-[#F1F5F9] p-1.5 rounded-2xl gap-2 w-full sm:w-auto">
           <button

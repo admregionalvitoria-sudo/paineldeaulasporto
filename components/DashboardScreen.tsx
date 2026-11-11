@@ -1,3 +1,4 @@
+import { dataLocal, dataBR } from '../utils/datas';
 import React, { useContext, useEffect, useState, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { DataContext } from '../context/DataContext';
@@ -251,10 +252,10 @@ const CleanVideoPlayer: React.FC<CleanVideoPlayerProps> = ({ src, name, onEnded 
 
     if (ytId) {
         return (
-            <div className="w-full h-full aspect-[9/16] relative overflow-hidden bg-black flex items-center justify-center pointer-events-none">
+            <div className="w-full h-full relative overflow-hidden bg-black flex items-center justify-center pointer-events-none">
                 <iframe 
                     src={getYouTubeEmbedUrl(src)} 
-                    className="w-full h-full aspect-[9/16] border-0 pointer-events-none" 
+                    className="w-full h-full border-0 pointer-events-none"
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
                     allowFullScreen
                     title={name || "Vídeo SENAI"}
@@ -265,10 +266,10 @@ const CleanVideoPlayer: React.FC<CleanVideoPlayerProps> = ({ src, name, onEnded 
 
     if (isVcdn) {
         return (
-            <div className="w-full h-full aspect-[9/16] relative overflow-hidden bg-black flex items-center justify-center pointer-events-none">
+            <div className="w-full h-full relative overflow-hidden bg-black flex items-center justify-center pointer-events-none">
                 <iframe 
                     src={getVcdnEmbedUrl(src)} 
-                    className="w-full h-full aspect-[9/16] border-0 pointer-events-none" 
+                    className="w-full h-full border-0 pointer-events-none"
                     allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen"
                     allowFullScreen
                     title={name || "Vídeo VCDN / VdoHide"}
@@ -280,7 +281,7 @@ const CleanVideoPlayer: React.FC<CleanVideoPlayerProps> = ({ src, name, onEnded 
     if (useIframeFallback && driveId) {
         // Fallback para iframe do Drive com recorte superior e lateral para ocultar o botão de link/popout (⧉)
         return (
-            <div className="w-full h-full aspect-[9/16] relative overflow-hidden bg-black flex items-center justify-center pointer-events-none select-none">
+            <div className="w-full h-full relative overflow-hidden bg-black flex items-center justify-center pointer-events-none select-none">
                 <iframe 
                     src={`https://drive.google.com/file/d/${driveId}/preview?autoplay=1`} 
                     className="w-[115%] h-[115%] -mt-[8%] -mr-[7%] border-0 pointer-events-none scale-[1.05]" 
@@ -298,7 +299,7 @@ const CleanVideoPlayer: React.FC<CleanVideoPlayerProps> = ({ src, name, onEnded 
         <video 
             ref={videoRef}
             key={src}
-            className="w-full h-full aspect-[9/16] object-cover pointer-events-none select-none bg-black"
+            className="w-full h-full object-contain pointer-events-none select-none bg-black"
             autoPlay 
             muted 
             loop 
@@ -354,7 +355,7 @@ const MediaCarouselPanel = React.memo<{ anuncios: Anuncio[] }>(({ anuncios }) =>
     const isVid = currentAd?.type === 'video' || isDirectVideoUrl(currentAd?.src) || isDrive || isYT;
 
     return (
-        <div className="w-full h-full aspect-[9/16] overflow-hidden bg-[#0A192F] relative flex items-center justify-center select-none">
+        <div className="w-full h-full overflow-hidden bg-[#0A192F] relative flex items-center justify-center select-none">
             <AnimatePresence mode="wait">
                 <motion.div 
                     key={currentAd.id || currentAd.src || adIndex}
@@ -362,7 +363,7 @@ const MediaCarouselPanel = React.memo<{ anuncios: Anuncio[] }>(({ anuncios }) =>
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.3 }}
-                    className="absolute inset-0 w-full h-full aspect-[9/16] flex items-center justify-center overflow-hidden bg-black"
+                    className="absolute inset-0 w-full h-full flex items-center justify-center overflow-hidden bg-black"
                 >
                     {isVid ? (
                         <CleanVideoPlayer 
@@ -377,7 +378,7 @@ const MediaCarouselPanel = React.memo<{ anuncios: Anuncio[] }>(({ anuncios }) =>
                     ) : (
                         <img 
                             src={currentAd.src} 
-                            className="w-full h-full aspect-[9/16] object-cover pointer-events-none select-none" 
+                            className="w-full h-full object-contain pointer-events-none select-none"
                             alt={currentAd.name || "Destaque SENAI"} 
                             referrerPolicy="no-referrer" 
                         />
@@ -415,7 +416,7 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
     const [isFullscreen, setIsFullscreen] = useState(false);
     const [searchTurma, setSearchTurma] = useState('');
     const lastDetectedShiftRef = useRef<string>(getAutomaticShift());
-    const manualOverrideTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+    const manualOverrideTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
     const [isManualOverride, setIsManualOverride] = useState(false);
     
     // Configurações de Manutenção
@@ -452,9 +453,12 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
 
         return () => {
             clearInterval(interval);
-            if (manualOverrideTimeoutRef.current) clearTimeout(manualOverrideTimeoutRef.current);
         };
     }, [isManualOverride]);
+
+    useEffect(() => () => {
+        if (manualOverrideTimeoutRef.current) clearTimeout(manualOverrideTimeoutRef.current);
+    }, []);
 
     const handleSelectShiftManually = (shift: string) => {
         setCurrentShift(shift);
@@ -470,11 +474,7 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
 
     useEffect(() => {
         if (context && !context.loading) {
-            const now = new Date();
-            const day = String(now.getDate()).padStart(2, '0');
-            const month = String(now.getMonth() + 1).padStart(2, '0');
-            const year = now.getFullYear();
-            const todayStr = `${day}/${month}/${year}`;
+            const todayStr = dataBR(dataLocal());
 
             const filtered = context.aulas.filter(a => {
                 const aulaData = a.data.trim();
@@ -518,7 +518,7 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
         );
     }
 
-    const displayAulas = filteredAulas.slice(0, 35);
+    const displayAulas = filteredAulas;
     const hasAnuncios = (context.anuncios?.length || 0) > 0;
 
     const turnos = [
@@ -615,21 +615,28 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
                     
                     {/* Left Card: Schedule Table Container */}
                     <div className="flex-1 min-w-0 h-full rounded-[2rem] lg:rounded-[2.5rem] bg-white border border-[#CBD5E1] shadow-[0_10px_30px_-10px_rgba(15,42,82,0.08)] overflow-hidden flex flex-col">
-                        <div className="rounded-[1.9rem] lg:rounded-[2.4rem] w-full h-full bg-white flex flex-col overflow-hidden custom-scrollbar overflow-y-auto">
-                            {displayAulas.length > 0 ? (
-                                <div className="w-full">
+                        <div className="rounded-[1.9rem] lg:rounded-[2.4rem] w-full h-full bg-white flex flex-col overflow-hidden">
+                            {filteredAulas.length > 0 ? (
+                                <div className="w-full h-full flex flex-col">
                                     <table className="w-full text-left border-collapse table-auto md:table-fixed">
                                         <thead className="sticky top-0 z-10 shadow-sm">
                                             <tr className="bg-[#0F2A52] text-white text-xs md:text-sm font-black uppercase tracking-[0.2em] border-b-2 border-[#0F2A52]">
-                                                <th className="py-3.5 lg:py-4 px-3.5 lg:px-5 w-[14%]">Turma</th>
-                                                <th className="py-3.5 lg:py-4 px-3.5 lg:px-5 w-[27%]">Ambiente / Sala</th>
-                                                <th className="py-3.5 lg:py-4 px-3.5 lg:px-5 w-[20%]">Instrutor</th>
-                                                <th className="py-3.5 lg:py-4 px-3.5 lg:px-5 w-[26%]">Unidade Curricular</th>
-                                                <th className="py-3.5 lg:py-4 px-3.5 lg:px-5 w-[13%]">Horário</th>
+                                                <th className={`py-2 lg:py-3 px-2 lg:px-4 w-[14%]`}>Turma</th>
+                                                <th className={`py-2 lg:py-3 px-2 lg:px-4 w-[27%]`}>Ambiente / Sala</th>
+                                                <th className={`py-2 lg:py-3 px-2 lg:px-4 w-[20%]`}>Instrutor</th>
+                                                <th className={`py-2 lg:py-3 px-2 lg:px-4 w-[26%]`}>Unidade Curricular</th>
+                                                <th className={`py-2 lg:py-3 px-2 lg:px-4 w-[13%]`}>Horário</th>
                                             </tr>
                                         </thead>
                                         <tbody className="divide-y divide-[#E2E8F0]">
-                                            {displayAulas.map((aula, idx) => (
+                                            {displayAulas.map((aula, idx) => {
+                                                const isCrowded = displayAulas.length > 7;
+                                                const rowPadding = isCrowded ? "py-1.5 lg:py-2 px-2 lg:px-3" : "py-3.5 lg:py-4 px-3.5 lg:px-5";
+                                                const textTurma = isCrowded ? "text-sm md:text-base" : "text-base md:text-lg";
+                                                const textSala = isCrowded ? "text-xs md:text-sm" : "text-sm md:text-base";
+                                                const textInstrutor = isCrowded ? "text-[10px] md:text-xs" : "text-xs md:text-sm";
+
+                                                return (
                                                 <motion.tr 
                                                     key={aula.id}
                                                     initial={{ opacity: 0, y: 8 }}
@@ -637,24 +644,24 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
                                                     transition={{ delay: idx * 0.02, duration: 0.3 }}
                                                     className="hover:bg-[#F8FAFC] transition-colors duration-200"
                                                 >
-                                                    <td className="py-3.5 lg:py-4 px-3.5 lg:px-5 font-black text-[#0F2A52] text-base md:text-lg tracking-tight uppercase">
+                                                    <td className={`${rowPadding} font-black text-[#0F2A52] ${textTurma} tracking-tight uppercase`}>
                                                         <span>{formatText(aula.turma)}</span>
                                                     </td>
-                                                    <td className="py-3.5 lg:py-4 px-3.5 lg:px-5 text-sm md:text-base font-black uppercase text-[#F4901E] tracking-wider">
+                                                    <td className={`${rowPadding} ${textSala} font-black uppercase text-[#F4901E] tracking-wider`}>
                                                         <div className="flex items-center gap-2">
-                                                            <ClockIcon className="w-4 h-4 text-[#F4901E] flex-shrink-0" />
+                                                            <ClockIcon className={`${isCrowded ? 'w-3 h-3' : 'w-4 h-4'} text-[#F4901E] flex-shrink-0`} />
                                                             <span className="truncate">{abrevSala(aula.sala)}</span>
                                                         </div>
                                                     </td>
-                                                    <td className="py-3.5 lg:py-4 px-3.5 lg:px-5 text-xs md:text-sm font-bold text-[#374151] uppercase">
+                                                    <td className={`${rowPadding} ${textInstrutor} font-bold text-[#374151] uppercase`}>
                                                         <div className="flex items-center gap-2">
-                                                            <UserTieIcon className="w-4 h-4 text-[#1D4E8C] flex-shrink-0" />
+                                                            <UserTieIcon className={`${isCrowded ? 'w-3 h-3' : 'w-4 h-4'} text-[#1D4E8C] flex-shrink-0`} />
                                                             <span className="truncate">{formatText(aula.instrutor)}</span>
                                                         </div>
                                                     </td>
-                                                    <td className="py-3.5 lg:py-4 px-3.5 lg:px-5 text-[#374151] uppercase">
+                                                    <td className={`${rowPadding} text-[#374151] uppercase`}>
                                                         <div className="flex items-center gap-2 max-w-full">
-                                                            <BookOpenIcon className="w-4 h-4 text-[#1D4E8C] flex-shrink-0" />
+                                                            <BookOpenIcon className={`${isCrowded ? 'w-3 h-3' : 'w-4 h-4'} text-[#1D4E8C] flex-shrink-0`} />
                                                             <span 
                                                                 className={`font-bold uppercase break-words ${getDynamicUcTextClass(formatarUnidadeCurricular(aula.unidade_curricular))}`}
                                                                 title={formatarUnidadeCurricular(aula.unidade_curricular)}
@@ -663,14 +670,15 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
                                                             </span>
                                                         </div>
                                                     </td>
-                                                    <td className="py-3.5 lg:py-4 px-3.5 lg:px-5 text-xs md:text-sm font-black text-[#0F2A52] tracking-wider whitespace-nowrap">
+                                                    <td className={`${rowPadding} ${textInstrutor} font-black text-[#0F2A52] tracking-wider whitespace-nowrap`}>
                                                         <div className="flex items-center gap-2">
-                                                            <ClockIcon className="w-4 h-4 text-[#F4901E] flex-shrink-0" />
+                                                            <ClockIcon className={`${isCrowded ? 'w-3 h-3' : 'w-4 h-4'} text-[#F4901E] flex-shrink-0`} />
                                                             <span>{formatarHorarioAula(aula)}</span>
                                                         </div>
                                                     </td>
                                                 </motion.tr>
-                                            ))}
+                                                );
+                                            })}
                                         </tbody>
                                     </table>
                                 </div>
@@ -685,10 +693,10 @@ const DashboardScreen: React.FC<{ onAdminClick: () => void; onAgendamentoClick?:
                         </div>
                     </div>
 
-                    {/* Right Card: Independent Media Container (Fixed 1080x1920 - 9:16 Vertical Ratio scaled to fit full screen height) */}
+                    {/* Right Card: Independent Media Container */}
                     {hasAnuncios && (
-                        <div className="h-full aspect-[9/16] flex-shrink-0 rounded-[2rem] lg:rounded-[2.5rem] bg-white border border-[#CBD5E1] shadow-[0_10px_30px_-10px_rgba(15,42,82,0.08)] overflow-hidden flex flex-col justify-center items-center">
-                            <div className="rounded-[1.9rem] lg:rounded-[2.4rem] w-full h-full aspect-[9/16] bg-black overflow-hidden flex items-center justify-center p-0">
+                        <div className="h-full w-[35%] lg:w-[30%] xl:w-[25%] flex-shrink-0 rounded-[2rem] lg:rounded-[2.5rem] bg-white border border-[#CBD5E1] shadow-[0_10px_30px_-10px_rgba(15,42,82,0.08)] overflow-hidden flex flex-col justify-center items-center">
+                            <div className="rounded-[1.9rem] lg:rounded-[2.4rem] w-full h-full bg-black overflow-hidden flex items-center justify-center p-0">
                                 <MediaCarouselPanel anuncios={context.anuncios} />
                             </div>
                         </div>

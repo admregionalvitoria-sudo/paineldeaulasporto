@@ -1,3 +1,4 @@
+import { dataLocal } from '../utils/datas';
 import React, { useState, useEffect } from 'react';
 import { collection, query, orderBy, limit, onSnapshot } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -64,7 +65,7 @@ const AuditLogsScreen: React.FC<AuditLogsScreenProps> = ({ onBack }) => {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement('a');
     link.setAttribute('href', encodedUri);
-    link.setAttribute('download', `auditoria_porto_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute('download', `auditoria_porto_${dataLocal()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

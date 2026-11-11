@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useContext } from 'react';
 import DashboardScreen from './components/DashboardScreen';
+import AdministrativoScreen from './components/AdministrativoScreen';
 import AdminScreen from './components/AdminScreen';
 import MediaScreen from './components/MediaScreen';
 import AgendamentoScreen from './components/AgendamentoScreen';
@@ -13,7 +14,8 @@ import { DataProvider, DataContext } from './context/DataContext';
 import { AuthProvider } from './context/AuthContext';
 import { ThemeProvider } from './context/ThemeContext';
 
-export type AppView = 'dashboard' | 'admin' | 'midia' | 'agendamento' | 'usuarios' | 'logs' | 'painelcliente' | 'limpeza';
+import { AppView, resolveAppView } from './utils/routes';
+export type { AppView } from './utils/routes';
 
 const AppContent: React.FC<{
   view: AppView;
@@ -26,7 +28,11 @@ const AppContent: React.FC<{
     <div className="w-full h-full relative">
       {isOffline && <OfflineScreen onRetry={() => window.location.reload()} />}
       
-      {view === 'admin' ? (
+      {view === 'administrativo' ? (
+        <ProtectedRoute onReturnToDashboard={() => navigateTo('dashboard')} allowedRoles={['admin', 'coordenador']}>
+          <AdministrativoScreen onNavigate={route => navigateTo(route as AppView)} />
+        </ProtectedRoute>
+      ) : view === 'admin' ? (
         <ProtectedRoute onReturnToDashboard={() => navigateTo('dashboard')} allowedRoles={['admin', 'coordenador']}>
           <AdminScreen 
             onReturnToDashboard={() => navigateTo('dashboard')}
@@ -34,7 +40,7 @@ const AppContent: React.FC<{
           />
         </ProtectedRoute>
       ) : view === 'midia' ? (
-        <ProtectedRoute onReturnToDashboard={() => navigateTo('dashboard')} allowedRoles={['admin', 'comunicacao']}>
+        <ProtectedRoute onReturnToDashboard={() => navigateTo('dashboard')} allowedRoles={['admin', 'comunicacao', 'midia']}>
           <MediaScreen onBack={() => navigateTo('admin')} />
         </ProtectedRoute>
       ) : view === 'usuarios' ? (
@@ -68,58 +74,13 @@ const AppContent: React.FC<{
 };
 
 function App() {
-  const getInitialView = (): AppView => {
-    const path = window.location.pathname.toLowerCase();
-    const hash = window.location.hash.toLowerCase();
-
-    if (path.startsWith('/admin') || hash === '#admin' || hash === '#/admin') {
-      return 'admin';
-    }
-    if (path.startsWith('/midia') || hash === '#midia' || hash === '#/midia') {
-      return 'midia';
-    }
-    if (path.startsWith('/usuario') || hash === '#usuarios' || hash === '#/usuarios') {
-      return 'usuarios';
-    }
-    if (path.startsWith('/logs') || path.startsWith('/auditoria') || hash === '#logs' || hash === '#/logs') {
-      return 'logs';
-    }
-    if (path.startsWith('/agendamento') || hash === '#agendamento' || hash === '#/agendamento') {
-      return 'agendamento';
-    }
-    if (path.startsWith('/painelcliente') || path.startsWith('/cliente') || path.startsWith('/recepcao') || hash === '#painelcliente' || hash === '#/painelcliente') {
-      return 'painelcliente';
-    }
-    if (path.startsWith('/limpeza') || hash === '#limpeza' || hash === '#/limpeza') {
-      return 'limpeza';
-    }
-    return 'dashboard';
-  };
+  const getInitialView = () => resolveAppView(window.location.pathname, window.location.hash);
 
   const [view, setView] = useState<AppView>(getInitialView);
 
   useEffect(() => {
     const handleLocationChange = () => {
-      const path = window.location.pathname.toLowerCase();
-      const hash = window.location.hash.toLowerCase();
-
-      if (path.startsWith('/admin') || hash === '#admin' || hash === '#/admin') {
-        setView('admin');
-      } else if (path.startsWith('/midia') || hash === '#midia' || hash === '#/midia') {
-        setView('midia');
-      } else if (path.startsWith('/usuario') || hash === '#usuarios' || hash === '#/usuarios') {
-        setView('usuarios');
-      } else if (path.startsWith('/logs') || path.startsWith('/auditoria') || hash === '#logs' || hash === '#/logs') {
-        setView('logs');
-      } else if (path.startsWith('/agendamento') || hash === '#agendamento' || hash === '#/agendamento') {
-        setView('agendamento');
-      } else if (path.startsWith('/painelcliente') || path.startsWith('/cliente') || path.startsWith('/recepcao') || hash === '#painelcliente' || hash === '#/painelcliente') {
-        setView('painelcliente');
-      } else if (path.startsWith('/limpeza') || hash === '#limpeza' || hash === '#/limpeza') {
-        setView('limpeza');
-      } else {
-        setView('dashboard');
-      }
+      setView(getInitialView());
     };
 
     window.addEventListener('popstate', handleLocationChange);
@@ -134,6 +95,7 @@ function App() {
     const routeMap: Record<AppView, string> = {
       dashboard: '/',
       admin: '/admin',
+      administrativo: '/administrativo',
       midia: '/midia',
       usuarios: '/usuarios',
       logs: '/logs',
