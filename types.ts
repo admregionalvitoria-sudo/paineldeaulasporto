@@ -33,13 +33,6 @@ export interface Anuncio {
   createdAt?: any;
 }
 
-export interface Aluno {
-  id: string;
-  nome: string;
-  turma?: string;
-  status?: string;
-}
-
 export interface AgendamentoSala {
   id: string;
   sala: string;
@@ -67,8 +60,14 @@ export interface AgendamentoSala {
   aprovadoPor?: string;
   aprovadoEm?: any;
   criadoEm?: any;
+  atualizadoEm?: any;
   criarAulaAoAprovar?: boolean;
 }
+
+export type AgendamentoPublico = Pick<AgendamentoSala,
+  'sala' | 'data' | 'turno' | 'horarioInicio' | 'horarioFim' | 'status' | 'criarAulaAoAprovar' | 'turma' | 'atualizadoEm'>;
+export type ReservaPublica = AgendamentoPublico & { id: string };
+export type ModoAgendamentos = 'completo' | 'publico';
 
 export interface DestaqueSlide {
   image: string;
@@ -128,8 +127,9 @@ export interface DataContextType {
   liberarAmbienteManutencao: (id: string) => Promise<void>;
   aulas: Aula[];
   anuncios: Anuncio[];
-  alunos: Aluno[];
   agendamentos: AgendamentoSala[];
+  agendamentosPublicos: ReservaPublica[];
+  assinarAgendamentos: (modo: ModoAgendamentos) => () => void;
   salasCadastradas: string[];
   ambientesPersonalizados?: string[];
   painelClienteConfig?: PainelClienteConfig;

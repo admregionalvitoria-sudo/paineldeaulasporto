@@ -7,7 +7,7 @@ import AgendaPorto from './AgendaPorto';
 import AlertasManagementSection from './AlertasManagementSection';
 import React, { useState, useContext, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { DataContext, ExtendedDataContextType, normalizarNomeAmbiente, calcularTurnoPorHorario } from '../context/DataContext';
+import { useAgendamentos, DataContext, ExtendedDataContextType, normalizarNomeAmbiente, calcularTurnoPorHorario } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
 import { estaEmManutencao } from '../utils/ambientes';
 import { Aula, AgendamentoSala } from '../types';
@@ -1152,6 +1152,7 @@ const LimpezaManagementSection: React.FC<{ onNavigate?: (route: string) => void 
 };
 
 const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNavigate }) => {
+  useAgendamentos('completo');
   const context = useContext(DataContext) as ExtendedDataContextType;
   const { usuarioAtual, logout, temPermissao } = useAuth();
 

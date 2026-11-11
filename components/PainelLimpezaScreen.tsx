@@ -3,7 +3,7 @@ import { PrioridadeLimpeza } from '../utils/administrativo';
 import { dataLocal } from '../utils/datas';
 import React, { useContext, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { DataContext } from '../context/DataContext';
+import { useAgendamentos, DataContext } from '../context/DataContext';
 import useCurrentTime from '../hooks/useCurrentTime';
 import { montarFilaLimpeza } from '../utils/limpeza';
 export { getNomeCurtoSala } from '../utils/limpeza';
@@ -21,6 +21,7 @@ interface PainelLimpezaScreenProps {
 
 const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDashboard }) => {
   const context = useContext(DataContext);
+  const agendamentosPublicos = useAgendamentos('publico');
   const prioridades = useAdministrativo<PrioridadeLimpeza>('prioridadesLimpeza');
   const { formattedDate, formattedTime } = useCurrentTime();
 
@@ -31,7 +32,7 @@ const PainelLimpezaScreen: React.FC<PainelLimpezaScreenProps> = ({ onReturnToDas
   const agora = new Date();
   const { fila: unifiedRooms, referencia, emManutencao } = montarFilaLimpeza({
     hoje: dataLocal(agora), agora,
-    aulas: context?.aulas || [], agendamentos: context?.agendamentos || [],
+    aulas: context?.aulas || [], agendamentos: agendamentosPublicos,
     manutencoes: context?.manutencoes || [], prioridades: prioridades.items,
     observacoes: context?.observacoesLimpeza || {},
   });

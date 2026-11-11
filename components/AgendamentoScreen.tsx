@@ -1,7 +1,7 @@
 import { dataBR, dataLocal } from '../utils/datas';
 import React, { useState, useContext, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { DataContext } from '../context/DataContext';
+import { useAgendamentos, DataContext } from '../context/DataContext';
 import useCurrentTime from '../hooks/useCurrentTime';
 import { formatarUnidadeCurricular, CANONICAL_UNIDADES_CURRICULARES } from '../utils/curricularUnits';
 import { estaEmManutencao } from '../utils/ambientes';
@@ -81,6 +81,7 @@ const AgendamentoModal: React.FC<{
 }> = ({ sala, initialData, initialTurno, onClose, onSuccess }) => {
     const defaultTurno = initialTurno === 'Matutino' ? 'Vespertino' : (initialTurno || 'Vespertino');
     const context = useContext(DataContext);
+    const agendamentosPublicos = useAgendamentos('publico');
     const [data, setData] = useState(initialData || formatDateToBR(new Date()));
     const [turno, setTurno] = useState(defaultTurno);
     const [solicitante, setSolicitante] = useState('');
@@ -106,8 +107,8 @@ const AgendamentoModal: React.FC<{
     // Verificação de disponibilidade em tempo real para os parâmetros digitados
     const dispAtual = useMemo(() => {
         if (!context) return { status: 'livre', label: 'Disponível' } as SalaDisponibilidade;
-        return verificarDisponibilidadeSala(sala, data, turno, context.aulas, context.agendamentos, context.manutencoes);
-    }, [sala, data, turno, context?.aulas, context?.agendamentos, context?.manutencoes]);
+        return verificarDisponibilidadeSala(sala, data, turno, context.aulas, agendamentosPublicos, context.manutencoes);
+    }, [sala, data, turno, context?.aulas, agendamentosPublicos, context?.manutencoes]);
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -406,6 +407,7 @@ const SalaDetalhesModal: React.FC<{
     onOpenSolicitacao: (sala: string, data: string, turno: string) => void;
 }> = ({ sala, onClose, onOpenSolicitacao }) => {
     const context = useContext(DataContext);
+    const agendamentosPublicos = useAgendamentos('publico');
     const [selectedTurnoTab, setSelectedTurnoTab] = useState<'todos' | 'Matutino' | 'Vespertino' | 'Noturno'>('todos');
 
     // Gerar os próximos 10 dias a partir de hoje
@@ -514,7 +516,7 @@ const SalaDetalhesModal: React.FC<{
                                     {/* 2 Turnos do Dia (Tarde e Noite) */}
                                     <div className="flex flex-col gap-2">
                                         {turnos.map(t => {
-                                            const disp = context ? verificarDisponibilidadeSala(sala, dia.dataStr, t, context.aulas, context.agendamentos, context.manutencoes) : { status: 'livre', label: 'Livre' } as SalaDisponibilidade;
+                                            const disp = context ? verificarDisponibilidadeSala(sala, dia.dataStr, t, context.aulas, agendamentosPublicos, context.manutencoes) : { status: 'livre', label: 'Livre' } as SalaDisponibilidade;
 
                                             return (
                                                 <div
@@ -546,8 +548,8 @@ const SalaDetalhesModal: React.FC<{
                                                         <span className="text-[10px] text-[#475569] font-medium truncate mt-0.5">
                                                             {disp.status === 'manutencao' && `Em manutenção: ${disp.motivoManutencao}`}
                                                             {disp.status === 'livre' && 'Disponível'}
-                                                            {disp.status === 'pendente' && `Pendente: ${disp.agendamento?.solicitante || 'Aguardando Gestor'}`}
-                                                            {disp.status === 'reservada' && `Reservada: ${disp.agendamento?.solicitante || 'Confirmado'}`}
+                                                            {disp.status === 'pendente' && 'Pendente: Aguardando Gestor'}
+                                                            {disp.status === 'reservada' && 'Reservada: Confirmado'}
                                                             {disp.status === 'ocupada_aula' && `${disp.aula?.turma || 'Aula'} • ${disp.aula?.instrutor || ''}`}
                                                         </span>
                                                     </div>
@@ -600,6 +602,7 @@ const AgendamentoScreen: React.FC<{
     onGoToAdmin: () => void;
 }> = ({ onReturnToDashboard, onGoToAdmin }) => {
     const context = useContext(DataContext);
+    const agendamentosPublicos = useAgendamentos('publico');
     const { formattedDate, formattedTime } = useCurrentTime();
 
     // Filtros de busca
@@ -626,8 +629,8 @@ const AgendamentoScreen: React.FC<{
     const salasComDisponibilidade = useMemo(() => {
         if (!context) return [];
         return salas.map(sala => {
-            const dispVespertino = verificarDisponibilidadeSala(sala, selectedDate, 'Vespertino', context.aulas, context.agendamentos, context.manutencoes);
-            const dispNoturno = verificarDisponibilidadeSala(sala, selectedDate, 'Noturno', context.aulas, context.agendamentos, context.manutencoes);
+            const dispVespertino = verificarDisponibilidadeSala(sala, selectedDate, 'Vespertino', context.aulas, agendamentosPublicos, context.manutencoes);
+            const dispNoturno = verificarDisponibilidadeSala(sala, selectedDate, 'Noturno', context.aulas, agendamentosPublicos, context.manutencoes);
 
             let dispFoco: SalaDisponibilidade;
             if (dispVespertino.status === 'manutencao') dispFoco = dispVespertino;
@@ -650,7 +653,7 @@ const AgendamentoScreen: React.FC<{
                 dispNoturno,
             };
         });
-    }, [salas, selectedDate, selectedTurno, context?.aulas, context?.agendamentos, context?.manutencoes]);
+    }, [salas, selectedDate, selectedTurno, context?.aulas, agendamentosPublicos, context?.manutencoes]);
 
     // Filtragem e Ordenação das salas (Prioridade: Salas com ocupação no dia primeiro)
     const salasFiltradas = useMemo(() => {

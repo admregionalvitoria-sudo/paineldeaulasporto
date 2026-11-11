@@ -4,16 +4,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Aula } from '../types';
 
 const firestore = vi.hoisted(() => ({
-  getDocs: vi.fn(), addDoc: vi.fn(), setDoc: vi.fn(), updateDoc: vi.fn(),
-  excluir: vi.fn(), inserir: vi.fn(), commit: vi.fn(),
+  getDocs: vi.fn(), getDoc: vi.fn(), addDoc: vi.fn(), setDoc: vi.fn(), updateDoc: vi.fn(), deleteDoc: vi.fn(),
+  excluir: vi.fn(), inserir: vi.fn(), atualizar: vi.fn(), commit: vi.fn(),
 }));
 vi.mock('../firebase', () => ({ db: {}, storage: {}, auth: { currentUser: { uid: 'gestor', email: 'gestor@senai.br' } } }));
 vi.mock('firebase/firestore', () => ({
   collection: (_db: unknown, ...path: string[]) => ({ path: path.join('/') }),
-  doc: (...args: unknown[]) => ({ path: typeof args[0] === 'object' && 'path' in args[0]! ? `${(args[0] as { path: string }).path}/nova` : args.slice(1).join('/') }),
-  getDocs: firestore.getDocs, addDoc: firestore.addDoc, setDoc: firestore.setDoc, updateDoc: firestore.updateDoc,
-  writeBatch: () => ({ delete: firestore.excluir, set: firestore.inserir, commit: firestore.commit }),
-  serverTimestamp: () => 'timestamp', onSnapshot: vi.fn(), query: vi.fn(), orderBy: vi.fn(), deleteDoc: vi.fn(),
+  doc: (...args: unknown[]) => ({ id: args.length === 1 ? 'nova' : args.at(-1), path: typeof args[0] === 'object' && 'path' in args[0]! ? `${(args[0] as { path: string }).path}/nova` : args.slice(1).join('/') }),
+  getDocs: firestore.getDocs, getDoc: firestore.getDoc, addDoc: firestore.addDoc, setDoc: firestore.setDoc, updateDoc: firestore.updateDoc,
+  writeBatch: () => ({ delete: firestore.excluir, set: firestore.inserir, update: firestore.atualizar, commit: firestore.commit }),
+  serverTimestamp: () => 'timestamp', onSnapshot: vi.fn(), query: vi.fn(), orderBy: vi.fn(), deleteDoc: firestore.deleteDoc,
 }));
 import { DataContext, DataProvider, type ExtendedDataContextType } from '../context/DataContext';
 
@@ -87,14 +87,77 @@ describe('gravação de aulas e importação', () => {
       notificarWhatsapp: false, status: 'pendente',
     });
     await expect(contexto.aprovarAgendamento('r', false, 'Gestor', observacao)).resolves.toBeUndefined();
-    expect(firestore.updateDoc).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+    expect(firestore.atualizar).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
       status: 'aprovado', observacaoDecisao: observacao?.trim() || '', decididoPor: 'Gestor',
     }));
+    expect(firestore.inserir).toHaveBeenCalledWith(expect.objectContaining({ path: 'porto/dados/agendamentosPublicos/r' }), expect.objectContaining({ status: 'aprovado', criarAulaAoAprovar: false }));
   });
 
   it.each([undefined, '', '   '])('mantém o motivo da recusa obrigatório: %s', async motivo => {
     await expect(sessao().rejeitarAgendamento('r', motivo)).rejects.toThrow('O motivo da recusa é obrigatório.');
     expect(firestore.updateDoc).not.toHaveBeenCalled();
+  });
+
+  it('cria reserva e espelho no mesmo batch sem copiar contato ou motivo', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    await expect(sessao().solicitarAgendamento({
+      sala: 'Sala 1', data: '12/11/2026', turno: 'Vespertino',
+      solicitante: 'Professor', emailSolicitante: 'professor@senai.br',
+      notificarWhatsapp: false, motivo: 'Privado', turma: 'T',
+    })).resolves.toBe('nova');
+    const escritas = firestore.inserir.mock.calls;
+    expect(escritas.map(([ref]) => ref.path)).toEqual(['porto/dados/agendamentos/nova', 'porto/dados/agendamentosPublicos/nova']);
+    expect(escritas[1][1]).toMatchObject({ sala: escritas[0][1].sala, status: 'pendente', turma: 'T', atualizadoEm: 'timestamp' });
+    expect(escritas[1][1]).not.toHaveProperty('solicitante');
+    expect(escritas[1][1]).not.toHaveProperty('emailSolicitante');
+    expect(escritas[1][1]).not.toHaveProperty('motivo');
+    expect(firestore.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('recusa com fallback getDoc e conserva os campos públicos da reserva', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    firestore.getDoc.mockResolvedValue({ exists: () => true, id: 'r', data: () => ({
+      sala: 'Sala 2', data: '12/11/2026', turno: 'Noturno', turma: 'T',
+      solicitante: 'Pessoa', status: 'pendente', criarAulaAoAprovar: false,
+    }) });
+    await sessao().rejeitarAgendamento('r', 'Motivo privado');
+    expect(firestore.getDoc).toHaveBeenCalledTimes(1);
+    expect(firestore.inserir).toHaveBeenCalledWith(expect.objectContaining({ path: 'porto/dados/agendamentosPublicos/r' }), {
+      sala: 'Sala 2', data: '12/11/2026', turno: 'Noturno', turma: 'T', status: 'rejeitado',
+      horarioInicio: '', horarioFim: '', criarAulaAoAprovar: false, atualizadoEm: 'timestamp',
+    });
+  });
+
+  it('aprova com fallback getDoc quando o estado ainda não carregou', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    firestore.getDoc.mockResolvedValue({ exists: () => true, id: 'r', data: () => ({
+      sala: 'Sala 2', data: '12/11/2026', turno: 'Noturno', solicitante: 'Pessoa', status: 'pendente',
+    }) });
+    await sessao().aprovarAgendamento('r', false);
+    expect(firestore.getDoc).toHaveBeenCalledTimes(1);
+    expect(firestore.inserir.mock.calls[0][1]).toMatchObject({ sala: 'Sala 2', status: 'aprovado' });
+  });
+
+  it('exclui reserva e espelho juntos, buscando o documento fora do estado', async () => {
+    firestore.getDoc.mockResolvedValue({ exists: () => true, id: 'r', data: () => ({ sala: 'Sala 2' }) });
+    await sessao().excluirAgendamento('r');
+    expect(firestore.getDoc).toHaveBeenCalledTimes(1);
+    expect(firestore.excluir.mock.calls.map(([ref]) => ref.path)).toEqual(['porto/dados/agendamentos/r', 'porto/dados/agendamentosPublicos/r']);
+    expect(firestore.commit).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserva operação principal se o batch com espelho falhar', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: true }));
+    const aviso = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    firestore.commit.mockRejectedValueOnce(new Error('Falha do espelho'));
+    const contexto = sessao();
+    contexto.agendamentos.push({ id: 'r', sala: 'Sala 2', data: '12/11/2026', turno: 'Noturno',
+      solicitante: 'Pessoa', emailSolicitante: 'pessoa@senai.br', notificarWhatsapp: false, status: 'pendente' });
+    try {
+      await expect(contexto.aprovarAgendamento('r', false)).resolves.toBeUndefined();
+      expect(aviso).toHaveBeenCalledTimes(1);
+      expect(firestore.updateDoc).toHaveBeenCalledWith(expect.objectContaining({ path: 'porto/dados/agendamentos/r' }), expect.objectContaining({ status: 'aprovado' }));
+    } finally { aviso.mockRestore(); }
   });
 
   it('rejeita CSV só histórico antes de iniciar exclusões', async () => {

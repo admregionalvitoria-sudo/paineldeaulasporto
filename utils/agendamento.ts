@@ -1,4 +1,4 @@
-import type { Aula, AgendamentoSala, ManutencaoAmbiente } from '../types';
+import type { Aula, ReservaPublica, ManutencaoAmbiente } from '../types';
 import { estaEmManutencao, normalizarNomeAmbiente } from './ambientes';
 const normalizeTurno = (valor?: string) => (valor || '').trim().toLowerCase();
 
@@ -9,7 +9,7 @@ export interface SalaDisponibilidade {
     label: string;
     motivoManutencao?: string;
     aula?: Aula;
-    agendamento?: AgendamentoSala;
+    agendamento?: ReservaPublica;
 }
 
 export const verificarDisponibilidadeSala = (
@@ -17,7 +17,7 @@ export const verificarDisponibilidadeSala = (
     data: string,
     turno: string,
     aulas: Aula[],
-    agendamentos: AgendamentoSala[],
+    agendamentos: ReservaPublica[],
     manutencoes: ManutencaoAmbiente[] = []
 ): SalaDisponibilidade => {
     const manutencao = estaEmManutencao(sala, data, manutencoes);

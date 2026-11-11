@@ -1,4 +1,4 @@
-import type { Aula, AgendamentoSala, ManutencaoAmbiente, ObservacaoLimpeza } from '../types';
+import type { Aula, ReservaPublica, ManutencaoAmbiente, ObservacaoLimpeza } from '../types';
 import { estaEmManutencao, normalizarNomeAmbiente } from './ambientes';
 import { dataBR, dataISO, dataLocal } from './datas';
 import { pesoPrioridade, prioridadesDoDia, type PrioridadeLimpeza } from './administrativo';
@@ -23,7 +23,7 @@ export function horarioUso(inicioInformado?: string, turnoInformado?: string, fi
   return { inicio: formatar(start), fim: formatar(end), start, end, turno };
 }
 
-export function usosDoDia(data: string, aulas: Aula[], agendamentos: AgendamentoSala[], manutencoes: ManutencaoAmbiente[] = []): Aula[] {
+export function usosDoDia(data: string, aulas: Aula[], agendamentos: ReservaPublica[], manutencoes: ManutencaoAmbiente[] = []): Aula[] {
   const dia = dataBR(data);
   const aulasDoDia = aulas.filter(a => dataISO(a.data) === dataISO(data));
   const usos = aulasDoDia.filter(a => a.ativa !== false && !estaEmManutencao(a.sala, dia, manutencoes));
@@ -37,7 +37,7 @@ export function usosDoDia(data: string, aulas: Aula[], agendamentos: Agendamento
     vistas.add(key);
     usos.push({ id: `reserva-${ag.id}`, sala: ag.sala, data: dia, turno: ag.turno,
       inicio: ag.horarioInicio || '', fim: ag.horarioFim || '', turma: ag.turma || 'Reserva',
-      instrutor: ag.solicitante, unidade_curricular: ag.disciplina || ag.motivo || 'Reserva aprovada' });
+      instrutor: '', unidade_curricular: 'Reserva aprovada' });
   }
   return usos;
 }
@@ -70,7 +70,7 @@ interface FilaParams {
   hoje: string;
   agora: Date;
   aulas: Aula[];
-  agendamentos: AgendamentoSala[];
+  agendamentos: ReservaPublica[];
   manutencoes?: ManutencaoAmbiente[];
   prioridades?: PrioridadeLimpeza[];
   observacoes?: Record<string, ObservacaoLimpeza>;

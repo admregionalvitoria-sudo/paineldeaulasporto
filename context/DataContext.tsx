@@ -1,10 +1,12 @@
+import { montarAgendamentoPublico, planejarBackfillAgendamentos } from '../utils/agendamentosPublicos';
+import { criarAssinaturas } from '../utils/assinaturas';
 import { AuthContext } from './AuthContext';
 import { planejarImportacaoAulas } from '../utils/importacaoAulas';
 import { dataLocal, dataISO } from '../utils/datas';
 import { validarContatoAgendamento, normalizarTelefone, whatsappAutorizado } from '../utils/notificacaoAgendamento.mjs';
 import React, { createContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { upload as vercelBlobUpload } from '@vercel/blob/client';
-import { Aula, Anuncio, Aluno, AgendamentoSala, DataContextType, AuditAction, PainelClienteConfig, ObservacaoLimpeza, ManutencaoAmbiente, Alerta } from '../types';
+import { Aula, Anuncio, AgendamentoSala, ReservaPublica, ModoAgendamentos, DataContextType, AuditAction, PainelClienteConfig, ObservacaoLimpeza, ManutencaoAmbiente, Alerta } from '../types';
 import { db, storage, auth } from '../firebase';
 import { formatarUnidadeCurricular } from '../utils/curricularUnits';
 import { formatarNomeSala, CANONICAL_SALAS } from '../utils/roomFormatter';
@@ -20,6 +22,7 @@ import {
   writeBatch,
   query,
   getDocs,
+  getDoc,
   serverTimestamp,
   orderBy
 } from 'firebase/firestore';
@@ -39,6 +42,7 @@ export interface ExtendedDataContextType extends DataContextType {
 export const DataContext = createContext<ExtendedDataContextType | undefined>(undefined);
 
 // Compartilhado entre remontagens do provider durante esta sessão da página.
+let backfillAgendamentosTentado = false;
 const aulasComCorrecaoTentada = new Set<string>();
 
 const FIRESTORE_ROOT_COLLECTION = 'porto';
@@ -182,9 +186,92 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   perfilRef.current = perfil;
   const [aulas, setAulas] = useState<Aula[]>([]);
   const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
-  const [alunos, setAlunos] = useState<Aluno[]>([]);
   const [manutencoes, setManutencoes] = useState<ManutencaoAmbiente[]>([]);
   const [agendamentos, setAgendamentos] = useState<AgendamentoSala[]>([]);
+  const [agendamentosPublicos, setAgendamentosPublicos] = useState<ReservaPublica[]>([]);
+  const reservasAtuais = React.useRef<AgendamentoSala[]>([]);
+  const assinaturas = useMemo(() => criarAssinaturas<ModoAgendamentos>(modo => {
+    if (modo === 'publico') {
+      const cancelar = onSnapshot(collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentosPublicos'), snapshot => {
+        setAgendamentosPublicos(snapshot.docs.map(d => ({ ...montarAgendamentoPublico(d.data()), id: d.id })));
+      }, err => console.warn('Aviso listener agendamentos públicos:', err));
+      return () => { cancelar(); setAgendamentosPublicos([]); };
+    }
+    const agendamentosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos');
+    let ativo = true;
+    const unsubAgendamentos = onSnapshot(agendamentosCollectionRef, { includeMetadataChanges: true }, (snapshot) => {
+      const agendamentosData = snapshot.docs.map(docSnap => {
+        const d = docSnap.data();
+        return {
+          ...d,
+          id: docSnap.id,
+          sala: d.sala || '',
+          data: d.data || '',
+          turno: d.turno || 'Matutino',
+          horarioInicio: d.horarioInicio || '',
+          horarioFim: d.horarioFim || '',
+          solicitante: d.solicitante || '',
+          emailSolicitante: d.emailSolicitante || '',
+          notificarWhatsapp: whatsappAutorizado(d),
+          telefoneSolicitante: d.telefoneSolicitante || '',
+          consentimentoWhatsappEm: d.consentimentoWhatsappEm,
+          consentimentoWhatsappTexto: d.consentimentoWhatsappTexto,
+          turma: d.turma || '',
+          disciplina: d.disciplina || '',
+          motivo: d.motivo || '',
+          status: d.status || 'pendente',
+          motivoRejeicao: d.motivoRejeicao || '',
+          aprovadoPor: d.aprovadoPor || '',
+          aprovadoEm: d.aprovadoEm || null,
+          criadoEm: d.criadoEm || null,
+          criarAulaAoAprovar: d.criarAulaAoAprovar ?? true
+        } as AgendamentoSala;
+      });
+
+      agendamentosData.sort((a, b) => {
+        if (a.status === 'pendente' && b.status !== 'pendente') return -1;
+        if (a.status !== 'pendente' && b.status === 'pendente') return 1;
+        const timeA = a.criadoEm?.toMillis?.() || a.criadoEm || 0;
+        const timeB = b.criadoEm?.toMillis?.() || b.criadoEm || 0;
+        return timeB - timeA;
+      });
+
+      reservasAtuais.current = agendamentosData;
+      setAgendamentos(agendamentosData);
+      const usuario = auth.currentUser;
+      const perfil = perfilRef.current;
+      if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites && !backfillAgendamentosTentado
+        && usuario && !usuario.isAnonymous && perfil?.uid === usuario.uid && perfil.ativo
+        && ['super_admin', 'admin', 'coordenador'].includes(perfil.role)) {
+        backfillAgendamentosTentado = true;
+        void (async () => {
+          const espelho = await getDocs(collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentosPublicos'));
+          if (!ativo) return;
+          const plano = planejarBackfillAgendamentos(reservasAtuais.current, espelho.docs.map(d => ({ ...d.data(), id: d.id })));
+          const operacoes = [
+            ...plano.criar.map(item => ({ ...item, apagar: false })),
+            ...plano.atualizar.map(item => ({ ...item, apagar: false })),
+            ...plano.remover.map(id => ({ id, dados: null, apagar: true })),
+          ];
+          for (let i = 0; i < operacoes.length; i += 450) {
+            const batch = writeBatch(db);
+            for (const op of operacoes.slice(i, i + 450)) {
+              const ref = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentosPublicos', op.id);
+              if (op.apagar) batch.delete(ref);
+              else batch.set(ref, op.dados!);
+            }
+            await batch.commit();
+          }
+        })().catch(err => console.warn('Aviso ao reconciliar espelho de agendamentos:', err));
+      }
+    }, (err) => {
+      console.warn("Aviso listener agendamentos:", err);
+    });
+
+    return () => { ativo = false; unsubAgendamentos(); reservasAtuais.current = []; setAgendamentos([]); };
+  }), []);
+  const assinarAgendamentos = React.useCallback((modo: ModoAgendamentos) => assinaturas.assinar(modo), [assinaturas]);
+  useEffect(() => () => assinaturas.cancelarTodas(), [assinaturas]);
   const [ambientesPersonalizados, setAmbientesPersonalizados] = useState<{ id: string; nome: string }[]>([]);
   const [painelClienteConfig, setPainelClienteConfig] = useState<PainelClienteConfig>(DEFAULT_PAINEL_CLIENTE_CONFIG);
   const [observacoesLimpeza, setObservacoesLimpeza] = useState<Record<string, ObservacaoLimpeza>>({});
@@ -267,7 +354,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
 
     // 3. Salas dos agendamentos
-    agendamentos.forEach(ag => {
+    [...agendamentos, ...agendamentosPublicos].forEach(ag => {
       if (ag.sala && ag.sala.trim()) {
         const formatado = formatarNomeSala(ag.sala);
         const norm = normalizarNomeAmbiente(formatado);
@@ -278,7 +365,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
 
     return Array.from(salasMap.values()).sort((a, b) => a.localeCompare(b, 'pt-BR', { numeric: true, sensitivity: 'base' }));
-  }, [aulas, agendamentos, ambientesPersonalizados]);
+  }, [aulas, agendamentos, agendamentosPublicos, ambientesPersonalizados]);
 
   // Checagem de conflito: impede 2 turmas no mesmo ambiente no mesmo dia e turno
   const verificarConflitoAmbiente = (
@@ -332,8 +419,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     const aulasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
     const anunciosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'anuncios');
-    const alunosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'alunos');
-    const agendamentosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos');
     const ambientesCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'ambientes');
     const limpezaCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'limpeza');
     const alertasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'alertas');
@@ -433,61 +518,9 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.error("Erro ao carregar anúncios do Firestore:", err);
     });
 
-    const unsubAlunos = onSnapshot(alunosCollectionRef, (snapshot) => {
-      const alunosData = snapshot.docs.map(doc => ({ 
-        id: doc.id,
-        nome: doc.data().nome || doc.data().aluno || "Aluno sem nome",
-        turma: doc.data().turma || "",
-        status: doc.data().status || "Ativo"
-      })) as Aluno[];
-      setAlunos(alunosData);
-    });
-
     const unsubManutencoes = onSnapshot(collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'manutencoes'), snapshot => {
       setManutencoes(snapshot.docs.map(d => ({ ...d.data(), id: d.id } as ManutencaoAmbiente)));
     }, () => console.warn('Falha ao carregar manutenções'));
-
-    const unsubAgendamentos = onSnapshot(agendamentosCollectionRef, (snapshot) => {
-      const agendamentosData = snapshot.docs.map(docSnap => {
-        const d = docSnap.data();
-        return {
-          ...d,
-          id: docSnap.id,
-          sala: d.sala || '',
-          data: d.data || '',
-          turno: d.turno || 'Matutino',
-          horarioInicio: d.horarioInicio || '',
-          horarioFim: d.horarioFim || '',
-          solicitante: d.solicitante || '',
-          emailSolicitante: d.emailSolicitante || '',
-          notificarWhatsapp: whatsappAutorizado(d),
-          telefoneSolicitante: d.telefoneSolicitante || '',
-          consentimentoWhatsappEm: d.consentimentoWhatsappEm,
-          consentimentoWhatsappTexto: d.consentimentoWhatsappTexto,
-          turma: d.turma || '',
-          disciplina: d.disciplina || '',
-          motivo: d.motivo || '',
-          status: d.status || 'pendente',
-          motivoRejeicao: d.motivoRejeicao || '',
-          aprovadoPor: d.aprovadoPor || '',
-          aprovadoEm: d.aprovadoEm || null,
-          criadoEm: d.criadoEm || null,
-          criarAulaAoAprovar: d.criarAulaAoAprovar ?? true
-        } as AgendamentoSala;
-      });
-
-      agendamentosData.sort((a, b) => {
-        if (a.status === 'pendente' && b.status !== 'pendente') return -1;
-        if (a.status !== 'pendente' && b.status === 'pendente') return 1;
-        const timeA = a.criadoEm?.toMillis?.() || a.criadoEm || 0;
-        const timeB = b.criadoEm?.toMillis?.() || b.criadoEm || 0;
-        return timeB - timeA;
-      });
-
-      setAgendamentos(agendamentosData);
-    }, (err) => {
-      console.warn("Aviso listener agendamentos:", err);
-    });
 
     const painelClienteDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'painelCliente');
     const unsubPainelCliente = onSnapshot(painelClienteDocRef, (snap) => {
@@ -545,8 +578,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       unsubAmbientes();
       unsubAulas();
       unsubAnuncios();
-      unsubAlunos();
-      unsubAgendamentos();
       unsubManutencoes();
       unsubPainelCliente();
       unsubLimpeza();
@@ -1196,6 +1227,35 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
+  const buscarAgendamento = async (id: string): Promise<AgendamentoSala> => {
+    const atual = agendamentos.find(a => a.id === id);
+    if (atual) return atual;
+    const snap = await getDoc(doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos', id));
+    if (!snap.exists()) throw new Error('Agendamento não encontrado.');
+    return { ...snap.data(), id: snap.id } as AgendamentoSala;
+  };
+
+  // A escrita atômica é preferida; se o espelho falhar, preservar a operação principal.
+  const gravarReserva = async (id: string, dados: (Partial<AgendamentoSala> & { timestamp?: number }) | null, completo?: Partial<AgendamentoSala>, nova = false) => {
+    const principal = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos', id);
+    const publico = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentosPublicos', id);
+    const payload = dados && { ...dados, atualizadoEm: serverTimestamp() };
+    const batch = writeBatch(db);
+    if (!payload) { batch.delete(principal); batch.delete(publico); }
+    else {
+      if (nova) batch.set(principal, payload);
+      else batch.update(principal, payload);
+      batch.set(publico, montarAgendamentoPublico({ ...completo, ...payload }));
+    }
+    try { await batch.commit(); }
+    catch (err) {
+      console.warn('Aviso ao gravar reserva junto ao espelho público; tentando operação principal:', err);
+      if (!payload) await deleteDoc(principal);
+      else if (nova) await setDoc(principal, payload);
+      else await updateDoc(principal, payload);
+    }
+  };
+
   const solicitarAgendamento = async (dados: Omit<AgendamentoSala, 'id' | 'status' | 'criadoEm'>): Promise<string> => {
     try {
       const erroContato = validarContatoAgendamento(dados, import.meta.env.VITE_EMAIL_DOMINIOS_CORPORATIVOS);
@@ -1203,7 +1263,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const { canalNotificacao: _canalLegado, telefoneSolicitante, consentimentoWhatsappEm, consentimentoWhatsappTexto, ...dadosSemContato } = dados;
       if (estaEmManutencao(dados.sala, dados.data, manutencoes)) throw new Error('Ambiente em manutenção nesta data.');
       const agendamentosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos');
-      const docRef = await addDoc(agendamentosCollectionRef, {
+      const docRef = doc(agendamentosCollectionRef);
+      await gravarReserva(docRef.id, {
         ...dadosSemContato,
         emailSolicitante: dados.emailSolicitante.trim(),
         notificarWhatsapp: dados.notificarWhatsapp === true,
@@ -1212,7 +1273,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         status: 'pendente',
         criadoEm: serverTimestamp(),
         timestamp: Date.now()
-      });
+      }, undefined, true);
       void sincronizarPlanilha(docRef.id);
       return docRef.id;
     } catch (e: any) {
@@ -1223,12 +1284,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const aprovarAgendamento = async (id: string, criarAulaAutomatica: boolean = true, aprovador: string = 'Gestor', observacaoAprovacao: string = '') => {
     try {
-      const agendamento = agendamentos.find(a => a.id === id);
+      const agendamento = await buscarAgendamento(id);
       if (!agendamento) throw new Error("Agendamento não encontrado.");
 
       if (estaEmManutencao(agendamento.sala, agendamento.data, manutencoes)) throw new Error('Não é possível aprovar: ambiente em manutenção nesta data.');
-      const agendamentoDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos', id);
-      await updateDoc(agendamentoDocRef, {
+      await gravarReserva(id, {
         status: 'aprovado',
         observacaoDecisao: observacaoAprovacao.trim(),
         criarAulaAoAprovar: criarAulaAutomatica,
@@ -1236,7 +1296,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         decididoEm: serverTimestamp(),
         aprovadoPor: aprovador,
         aprovadoEm: serverTimestamp(),
-      });
+      }, agendamento);
 
       void sincronizarPlanilha(id);
       if (criarAulaAutomatica) {
@@ -1283,18 +1343,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const rejeitarAgendamento = async (id: string, motivoRejeicao?: string) => {
     if (!motivoRejeicao?.trim()) throw new Error('O motivo da recusa é obrigatório.');
     try {
-      const agendamento = agendamentos.find(a => a.id === id);
+      const agendamento = await buscarAgendamento(id);
       const user = auth.currentUser;
       const responsavel = user?.email || 'Coordenação';
 
-      const agendamentoDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos', id);
-      await updateDoc(agendamentoDocRef, {
+      await gravarReserva(id, {
         status: 'rejeitado',
         observacaoDecisao: motivoRejeicao.trim(),
         decididoPor: responsavel,
         decididoEm: serverTimestamp(),
         motivoRejeicao: motivoRejeicao || 'Não autorizado pela coordenação'
-      });
+      }, agendamento);
 
       void sincronizarPlanilha(id);
       await registrarLog(
@@ -1311,9 +1370,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const excluirAgendamento = async (id: string) => {
     try {
-      const agendamento = agendamentos.find(a => a.id === id);
-      const agendamentoDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos', id);
-      await deleteDoc(agendamentoDocRef);
+      const agendamento = await buscarAgendamento(id);
+      await gravarReserva(id, null);
 
       await registrarLog(
         'EXCLUIR_AGENDAMENTO',
@@ -1450,7 +1508,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   return (
     <DataContext.Provider value={{ 
       manutencoes, bloquearAmbienteManutencao, liberarAmbienteManutencao,
-      aulas, anuncios, alunos, agendamentos, salasCadastradas, painelClienteConfig, observacoesLimpeza, alertas, loading, error, isOffline,
+      aulas, anuncios, agendamentos, agendamentosPublicos, assinarAgendamentos, salasCadastradas, painelClienteConfig, observacoesLimpeza, alertas, loading, error, isOffline,
       addAula, updateAulasFromCSV, updateAula, deleteAula, 
       clearAulas, clearAulasHistory, addAnuncio, deleteAnuncio, replaceAnuncio, reorderAnuncios, clearAllAnuncios,
       uploadMediaFile, uploadCSV, syncSource, updatePainelClienteConfig,
@@ -1462,3 +1520,13 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     </DataContext.Provider>
   );
 };
+
+/** O efeito libera a referência ao desmontar ou trocar de modo. */
+export function useAgendamentos(modo: 'completo'): AgendamentoSala[];
+export function useAgendamentos(modo: 'publico'): ReservaPublica[];
+export function useAgendamentos(modo: ModoAgendamentos) {
+  const context = React.useContext(DataContext);
+  const assinar = context?.assinarAgendamentos;
+  useEffect(() => assinar?.(modo), [assinar, modo]);
+  return (modo === 'completo' ? context?.agendamentos : context?.agendamentosPublicos) || [];
+}

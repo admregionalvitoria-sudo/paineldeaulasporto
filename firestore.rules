@@ -4,7 +4,7 @@ service cloud.firestore {
   match /databases/{database}/documents {
     // Preserve the legacy collections while isolating the new administrative data.
     match /{path=**}/{collection}/{id} {
-      allow read, write: if !(collection in ['agendaPorto', 'prioridadesLimpeza']);
+      allow read, write: if !(collection in ['agendaPorto', 'prioridadesLimpeza', 'agendamentosPublicos']);
     }
 
     function hasRole(roles) {
@@ -16,6 +16,15 @@ service cloud.firestore {
 
     function canManage() {
       return hasRole(['super_admin', 'admin', 'coordenador']);
+    }
+
+    // Leitura pública; escrita compatível com solicitações sem login, limitada ao subconjunto.
+    match /porto/dados/agendamentosPublicos/{id} {
+      allow read, delete: if true;
+      allow create, update: if request.resource.data.keys().hasOnly([
+        'sala', 'data', 'turno', 'horarioInicio', 'horarioFim', 'status',
+        'criarAulaAoAprovar', 'turma', 'atualizadoEm'
+      ]);
     }
 
     match /porto/dados/agendaPorto/{id} {
