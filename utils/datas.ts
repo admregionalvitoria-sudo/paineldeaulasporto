@@ -3,6 +3,15 @@ export function dataLocal(date = new Date()): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
 }
 
+/** Limite de calendário para uma futura consulta de aulas após unificar datas.
+ * Não aplicar uma faixa no Firestore enquanto houver datas DD/MM/AAAA.
+ */
+export function limiteDataAulas(hoje = new Date()): string {
+  const limite = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
+  limite.setDate(limite.getDate() - 8);
+  return dataLocal(limite);
+}
+
 export function dataISO(data: string): string {
   if (!data?.includes('/')) return data || '';
   const [dia, mes, ano] = data.trim().split('/');

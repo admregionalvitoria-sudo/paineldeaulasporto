@@ -1,3 +1,4 @@
+import { AuthContext } from './AuthContext';
 import { planejarImportacaoAulas } from '../utils/importacaoAulas';
 import { dataLocal, dataISO } from '../utils/datas';
 import { validarContatoAgendamento, normalizarTelefone, whatsappAutorizado } from '../utils/notificacaoAgendamento.mjs';
@@ -36,6 +37,9 @@ export interface ExtendedDataContextType extends DataContextType {
 }
 
 export const DataContext = createContext<ExtendedDataContextType | undefined>(undefined);
+
+// Compartilhado entre remontagens do provider durante esta sessão da página.
+const aulasComCorrecaoTentada = new Set<string>();
 
 const FIRESTORE_ROOT_COLLECTION = 'porto';
 const FIRESTORE_DATA_DOCUMENT = 'dados';
@@ -97,27 +101,8 @@ const fileToDataUrl = (file: File): Promise<string> => {
   });
 };
 
-export const calcularTurnoPorHorario = (horarioStr: string): string => {
-    if (!horarioStr) return 'Vespertino';
-    const cleaned = String(horarioStr).trim().toLowerCase().replace('h', ':');
-    let horas = 0;
-    let minutos = 0;
-    if (cleaned.includes(':')) {
-        const parts = cleaned.split(':').map(p => parseInt(p, 10));
-        horas = isNaN(parts[0]) ? 13 : parts[0];
-        minutos = isNaN(parts[1]) ? 0 : parts[1];
-    } else {
-        horas = parseInt(cleaned, 10);
-        if (isNaN(horas)) return 'Vespertino';
-    }
-    const totalMinutos = (horas * 60) + (minutos || 0);
-    // 06:00 até 11:49:59 (360 até 709 minutos) -> Matutino
-    if (totalMinutos >= 360 && totalMinutos < 710) return 'Matutino';
-    // 11:50 até 17:49:59 (710 até 1069 minutos) -> Vespertino
-    if (totalMinutos >= 710 && totalMinutos < 1070) return 'Vespertino';
-    // 17:50 até 05:59:59 -> Noturno
-    return 'Noturno';
-};
+export { calcularTurnoPorHorario } from '../utils/turnos';
+import { calcularTurnoPorHorario } from '../utils/turnos';
 
 const formatarDataCSV = (valor: any): string => {
   if (!valor) return '';
@@ -192,6 +177,9 @@ export const DEFAULT_PAINEL_CLIENTE_CONFIG: PainelClienteConfig = {
 };
 
 export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+  const perfil = React.useContext(AuthContext)?.usuarioAtual;
+  const perfilRef = React.useRef(perfil);
+  perfilRef.current = perfil;
   const [aulas, setAulas] = useState<Aula[]>([]);
   const [anuncios, setAnuncios] = useState<Anuncio[]>([]);
   const [alunos, setAlunos] = useState<Aluno[]>([]);
@@ -208,7 +196,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const isInitialAulasLoadedRef = React.useRef(false);
   const lastAulasHashRef = React.useRef<string>('');
-  const reloadTimeoutRef = React.useRef<any>(null);
   const isInitialMetaLoadedRef = React.useRef(false);
 
   // Registro de Auditoria no Firestore
@@ -318,7 +305,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   useEffect(() => {
     const handleOnline = () => {
       setIsOffline(false);
-      window.location.reload();
     };
 
     const handleOffline = () => {
@@ -331,12 +317,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const checkInterval = setInterval(() => {
       if (typeof navigator !== 'undefined') {
         const currentlyOnline = navigator.onLine;
-        setIsOffline(prev => {
-          if (prev && currentlyOnline) {
-            window.location.reload();
-          }
-          return !currentlyOnline;
-        });
+        setIsOffline(!currentlyOnline);
       }
     }, 4000);
 
@@ -377,13 +358,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.warn("Aviso listener ambientes:", err);
     });
 
+    // Datas legadas DD/MM/AAAA e ISO coexistem: uma faixa em `data` omitiria aulas.
     const qAulas = query(aulasCollectionRef, orderBy('ordem', 'asc'));
     const unsubAulas = onSnapshot(qAulas, { includeMetadataChanges: true }, (snapshot) => {
       if (snapshot.metadata.fromCache && !navigator.onLine) {
         setIsOffline(true);
       }
 
-      const batchUpdates: Promise<void>[] = [];
+      const perfilGestao = perfilRef.current;
+      const podeCorrigir = !!auth.currentUser && !auth.currentUser.isAnonymous
+        && perfilGestao?.uid === auth.currentUser.uid && perfilGestao.ativo
+        && ['super_admin', 'admin', 'coordenador'].includes(perfilGestao.role);
       const aulasData = snapshot.docs.map(docSnap => {
         const d = docSnap.data();
         const formattedUC = formatarUnidadeCurricular(d.unidade_curricular);
@@ -394,7 +379,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const precisaAtualizarSala = formattedSala && d.sala !== formattedSala;
         const precisaAtualizarTurno = d.inicio && d.turno !== turnoCorreto;
 
-        if ((precisaAtualizarUC || precisaAtualizarSala || precisaAtualizarTurno) && navigator.onLine) {
+        if ((precisaAtualizarUC || precisaAtualizarSala || precisaAtualizarTurno) && navigator.onLine
+          && podeCorrigir && !aulasComCorrecaoTentada.has(docSnap.id)) {
+          // Marcar antes da escrita evita novas tentativas em snapshots concorrentes.
+          aulasComCorrecaoTentada.add(docSnap.id);
           const payload: any = {};
           if (precisaAtualizarUC) {
             payload.unidade_curricular = formattedUC;
@@ -406,9 +394,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           if (precisaAtualizarTurno) {
             payload.turno = turnoCorreto;
           }
-          batchUpdates.push(
-            updateDoc(docSnap.ref, payload).catch(() => {})
-          );
+          void updateDoc(docSnap.ref, payload).catch(() => {});
         }
 
         return {
@@ -565,7 +551,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       unsubPainelCliente();
       unsubLimpeza();
       unsubAlertas();
-      clearTimeout(reloadTimeoutRef.current);
     };
   }, []);
 

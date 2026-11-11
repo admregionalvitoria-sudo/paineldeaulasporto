@@ -1,6 +1,6 @@
 
 import { initializeApp, getApps, getApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { inicializarFirestoreComCache } from "./utils/firestoreCache";
 import { getStorage } from "firebase/storage";
 import { getAnalytics } from "firebase/analytics";
 import { getAuth } from "firebase/auth";
@@ -22,7 +22,7 @@ const databaseId = import.meta.env?.VITE_FIREBASE_DATABASE_ID || firebaseAppletC
 // Inicializa o app apenas uma vez
 const app = !getApps().length ? initializeApp(firebaseConfig) : getApp();
 const auth = getAuth(app);
-const db = databaseId && databaseId !== "(default)" ? getFirestore(app, databaseId) : getFirestore(app);
+const db = inicializarFirestoreComCache(app, databaseId);
 const storage = getStorage(app);
 const analytics = typeof window !== 'undefined' && firebaseConfig.measurementId ? getAnalytics(app) : null;
 

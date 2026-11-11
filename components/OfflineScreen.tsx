@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { motion } from 'motion/react';
 
 interface OfflineScreenProps {
@@ -7,18 +7,6 @@ interface OfflineScreenProps {
 
 const OfflineScreen: React.FC<OfflineScreenProps> = ({ onRetry }) => {
   const [checking, setChecking] = useState(false);
-
-  useEffect(() => {
-    const handleOnline = () => {
-      // Quando a internet retornar, recarrega a página inteira para garantir dados 100% novos do servidor
-      window.location.reload();
-    };
-
-    window.addEventListener('online', handleOnline);
-    return () => {
-      window.removeEventListener('online', handleOnline);
-    };
-  }, []);
 
   const handleManualRetry = async () => {
     setChecking(true);
@@ -85,7 +73,7 @@ const OfflineScreen: React.FC<OfflineScreenProps> = ({ onRetry }) => {
           </h1>
           <p className="text-sm text-slate-300 leading-relaxed mt-1">
             O painel foi pausado temporariamente para evitar a exibição de horários desatualizados (cache local). 
-            O sistema restabelecerá o funcionamento e recarregará a tela automaticamente assim que a conexão retornar.
+            O sistema restabelecerá o funcionamento automaticamente assim que a conexão retornar.
           </p>
         </div>
 

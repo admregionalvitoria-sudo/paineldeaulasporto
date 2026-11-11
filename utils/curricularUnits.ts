@@ -338,6 +338,10 @@ export const formatarUnidadeCurricular = (uc: string | undefined | null): string
   if (!uc) return 'Atividade SENAI';
 
   let raw = String(uc).trim();
+  // Saídas oficiais são pontos fixos, antes das regras aproximadas e reparos.
+  const oficial = ['Atividade SENAI', ...CANONICAL_UNIDADES_CURRICULARES]
+    .find(nome => nome.toUpperCase() === raw.toUpperCase());
+  if (oficial) return oficial;
   
   // 1. Limpar e reparar codificação corrompida (mojibake)
   raw = repararCaracteresCorrompidos(raw);
@@ -350,7 +354,9 @@ export const formatarUnidadeCurricular = (uc: string | undefined | null): string
     .replace(/\s*\(CH\s*[\d.]+\)/gi, '')
     .trim();
 
+  raw = raw.replace(/['"]/g, '').replace(/\s+/g, ' ').trim();
   if (!raw) return 'Atividade SENAI';
+  if (raw.toUpperCase() === 'ATIVIDADE SENAI') return 'Atividade SENAI';
 
   const normalized = normalizeTextForMatching(raw);
   const collapsed = normalized.replace(/\s+/g, '');
