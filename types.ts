@@ -122,6 +122,7 @@ export interface Alerta {
 }
 
 export interface DataContextType {
+  sincronizarPlanilha: (id: string) => Promise<void>;
   manutencoes: ManutencaoAmbiente[];
   bloquearAmbienteManutencao: (sala: string, motivo: string, inicio: string, fim?: string) => Promise<void>;
   liberarAmbienteManutencao: (id: string) => Promise<void>;

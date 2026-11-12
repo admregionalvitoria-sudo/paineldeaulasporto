@@ -627,6 +627,20 @@ const AgendamentosAdminSection: React.FC = () => {
   const [erroDecisao, setErroDecisao] = useState('');
   const [salvandoDecisao, setSalvandoDecisao] = useState(false);
   const [itemRejeitando, setItemRejeitando] = useState<AgendamentoSala | null>(null);
+  const [reenviandoPlanilha, setReenviandoPlanilha] = useState<Set<string>>(new Set());
+  const reenviosEmAndamento = useRef(new Set<string>());
+
+  const handleReenviarPlanilha = async (id: string) => {
+    if (reenviosEmAndamento.current.has(id)) return;
+    reenviosEmAndamento.current.add(id);
+    setReenviandoPlanilha(new Set(reenviosEmAndamento.current));
+    try {
+      await context.sincronizarPlanilha(id);
+    } finally {
+      reenviosEmAndamento.current.delete(id);
+      setReenviandoPlanilha(new Set(reenviosEmAndamento.current));
+    }
+  };
 
   const agendamentos = context.agendamentos || [];
 
@@ -781,6 +795,21 @@ const AgendamentosAdminSection: React.FC = () => {
               {ag.turma && <p className="text-xs text-[#6B7280]"><span className="font-bold">Turma:</span> {ag.turma}</p>}
               {ag.motivo && <p className="text-xs text-[#6B7280]"><span className="font-bold">Motivo:</span> {ag.motivo}</p>}
               {ag.aprovadoPor && <p className="text-[10px] text-emerald-700 font-bold">Aprovado por: {ag.aprovadoPor}</p>}
+              {ag.planilhaSyncErro && (
+                <div className="mt-2 rounded-lg border border-amber-200 bg-amber-50 p-2 text-xs text-amber-900">
+                  <p className="font-semibold">Não enviada à planilha</p>
+                  <p className="break-words">{ag.planilhaSyncErro}</p>
+                  <button
+                    type="button"
+                    disabled={reenviandoPlanilha.has(ag.id)}
+                    aria-busy={reenviandoPlanilha.has(ag.id)}
+                    onClick={() => handleReenviarPlanilha(ag.id)}
+                    className="mt-1 rounded border border-amber-300 px-3 py-1 font-semibold hover:bg-amber-100 disabled:opacity-50 disabled:cursor-wait"
+                  >
+                    {reenviandoPlanilha.has(ag.id) ? 'Reenviando...' : 'Reenviar'}
+                  </button>
+                </div>
+              )}
             </div>
 
             {ag.status === 'pendente' && (

@@ -1,5 +1,6 @@
 import { montarAgendamentoPublico, planejarBackfillAgendamentos } from '../utils/agendamentosPublicos';
 import { criarAssinaturas } from '../utils/assinaturas';
+import { selecionarReenvios } from '../utils/reenviosPlanilha';
 import { AuthContext } from './AuthContext';
 import { planejarImportacaoAulas } from '../utils/importacaoAulas';
 import { dataLocal, dataISO } from '../utils/datas';
@@ -43,6 +44,8 @@ export const DataContext = createContext<ExtendedDataContextType | undefined>(un
 
 // Compartilhado entre remontagens do provider durante esta sessão da página.
 let backfillAgendamentosTentado = false;
+const reenviosPlanilhaTentados = new Set<string>();
+let filaReenviosPlanilha = Promise.resolve();
 const aulasComCorrecaoTentada = new Set<string>();
 
 const FIRESTORE_ROOT_COLLECTION = 'porto';
@@ -224,6 +227,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           aprovadoPor: d.aprovadoPor || '',
           aprovadoEm: d.aprovadoEm || null,
           criadoEm: d.criadoEm || null,
+          planilhaSyncErro: d.planilhaSyncErro ?? null,
           criarAulaAoAprovar: d.criarAulaAoAprovar ?? true
         } as AgendamentoSala;
       });
@@ -238,11 +242,28 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       reservasAtuais.current = agendamentosData;
       setAgendamentos(agendamentosData);
-      const usuario = auth.currentUser;
-      const perfil = perfilRef.current;
+      const gestaoAutenticada = () => {
+        const usuarioAtual = auth.currentUser;
+        const perfilAtual = perfilRef.current;
+        return !!(usuarioAtual && !usuarioAtual.isAnonymous && perfilAtual?.uid === usuarioAtual.uid
+          && perfilAtual.ativo && ['super_admin', 'admin', 'coordenador'].includes(perfilAtual.role));
+      };
+      if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites && gestaoAutenticada()) {
+        // Cada snapshot do servidor agenda uma rodada de até 20, sem sobrepor POSTs.
+        filaReenviosPlanilha = filaReenviosPlanilha.then(async () => {
+          if (!ativo || !gestaoAutenticada()) return;
+          const ids = selecionarReenvios(agendamentosData, reenviosPlanilhaTentados, 20);
+          for (const id of ids) {
+            if (!ativo || !gestaoAutenticada()) return;
+            if (!reservasAtuais.current.some(reserva => reserva.id === id && reserva.planilhaSyncErro?.trim())) continue;
+            // Marcar antes do POST impede que o diagnóstico de falha gere outra tentativa.
+            reenviosPlanilhaTentados.add(id);
+            await sincronizarPlanilha(id);
+          }
+        }).catch(err => console.warn('Aviso ao reenviar agendamentos à planilha:', err));
+      }
       if (!snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites && !backfillAgendamentosTentado
-        && usuario && !usuario.isAnonymous && perfil?.uid === usuario.uid && perfil.ativo
-        && ['super_admin', 'admin', 'coordenador'].includes(perfil.role)) {
+        && gestaoAutenticada()) {
         backfillAgendamentosTentado = true;
         void (async () => {
           const espelho = await getDocs(collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentosPublicos'));
@@ -1512,7 +1533,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       addAula, updateAulasFromCSV, updateAula, deleteAula, 
       clearAulas, clearAulasHistory, addAnuncio, deleteAnuncio, replaceAnuncio, reorderAnuncios, clearAllAnuncios,
       uploadMediaFile, uploadCSV, syncSource, updatePainelClienteConfig,
-      solicitarAgendamento, aprovarAgendamento, rejeitarAgendamento, excluirAgendamento,
+      solicitarAgendamento, aprovarAgendamento, rejeitarAgendamento, excluirAgendamento, sincronizarPlanilha,
       adicionarAmbiente, excluirAmbiente, salvarObservacaoLimpeza, removerObservacaoLimpeza,
       criarAlerta, marcarAlertaLido, registrarLog
     }}>
