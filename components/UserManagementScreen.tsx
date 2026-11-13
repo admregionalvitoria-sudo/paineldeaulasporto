@@ -114,7 +114,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
   };
 
   const handleDeleteUser = async (user: UserProfile) => {
-    const isMaster = user.email === 'admin@senai.br' || user.email === 'admregionalvitoria@gmail.com';
+    const isMaster = user.role === 'super_admin';
     if (isMaster) {
       alert('A conta de administrador mestre não pode ser excluída.');
       return;
@@ -292,7 +292,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
 
           <div className="space-y-3">
             {usuarios.map((user) => {
-              const isMaster = user.email === 'admin@senai.br' || user.email === 'admregionalvitoria@gmail.com';
+              const isMaster = user.role === 'super_admin';
               const isSelf = user.uid === usuarioAtual?.uid;
               const isDeleting = deletingUid === user.uid;
 

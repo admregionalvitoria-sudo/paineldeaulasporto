@@ -7,7 +7,7 @@ const firestore = vi.hoisted(() => ({
   getDocs: vi.fn(), getDoc: vi.fn(), addDoc: vi.fn(), setDoc: vi.fn(), updateDoc: vi.fn(), deleteDoc: vi.fn(),
   excluir: vi.fn(), inserir: vi.fn(), atualizar: vi.fn(), commit: vi.fn(),
 }));
-vi.mock('../firebase', () => ({ db: {}, storage: {}, auth: { currentUser: { uid: 'gestor', email: 'gestor@senai.br' } } }));
+vi.mock('../firebase', () => ({ db: {}, storage: {}, auth: { currentUser: { uid: 'gestor', email: 'gestor@senai.br', getIdToken: async () => 'token-gestor' } } }));
 vi.mock('firebase/firestore', () => ({
   collection: (_db: unknown, ...path: string[]) => ({ path: path.join('/') }),
   doc: (...args: unknown[]) => ({ id: args.length === 1 ? 'nova' : args.at(-1), path: typeof args[0] === 'object' && 'path' in args[0]! ? `${(args[0] as { path: string }).path}/nova` : args.slice(1).join('/') }),
@@ -38,6 +38,7 @@ beforeEach(() => {
   vi.stubGlobal('alert', vi.fn());
   firestore.addDoc.mockResolvedValue({ id: 'nova' });
   firestore.commit.mockResolvedValue(undefined);
+  firestore.updateDoc.mockResolvedValue(undefined);
   dadosAtuais([]);
 });
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -91,6 +92,9 @@ describe('gravação de aulas e importação', () => {
       status: 'aprovado', observacaoDecisao: observacao?.trim() || '', decididoPor: 'Gestor',
     }));
     expect(firestore.inserir).toHaveBeenCalledWith(expect.objectContaining({ path: 'porto/dados/agendamentosPublicos/r' }), expect.objectContaining({ status: 'aprovado', criarAulaAoAprovar: false }));
+    const requisicao = vi.mocked(fetch).mock.calls[0];
+    expect(requisicao[1]?.headers).toMatchObject({ Authorization: 'Bearer token-gestor' });
+    expect(JSON.parse(requisicao[1]!.body as string).dados).toMatchObject({ status: 'aprovado', solicitante: 'Professor', observacaoDecisao: observacao?.trim() || '' });
   });
 
   it.each([undefined, '', '   '])('mantém o motivo da recusa obrigatório: %s', async motivo => {
@@ -112,6 +116,7 @@ describe('gravação de aulas e importação', () => {
     expect(escritas[1][1]).not.toHaveProperty('emailSolicitante');
     expect(escritas[1][1]).not.toHaveProperty('motivo');
     expect(firestore.commit).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string).dados).toMatchObject({ status: 'pendente', emailSolicitante: 'professor@senai.br' });
   });
 
   it('recusa com fallback getDoc e conserva os campos públicos da reserva', async () => {
@@ -121,6 +126,7 @@ describe('gravação de aulas e importação', () => {
       solicitante: 'Pessoa', status: 'pendente', criarAulaAoAprovar: false,
     }) });
     await sessao().rejeitarAgendamento('r', 'Motivo privado');
+    expect(JSON.parse(vi.mocked(fetch).mock.calls[0][1]!.body as string).dados).toMatchObject({ status: 'rejeitado', motivoRejeicao: 'Motivo privado', solicitante: 'Pessoa' });
     expect(firestore.getDoc).toHaveBeenCalledTimes(1);
     expect(firestore.inserir).toHaveBeenCalledWith(expect.objectContaining({ path: 'porto/dados/agendamentosPublicos/r' }), {
       sala: 'Sala 2', data: '12/11/2026', turno: 'Noturno', turma: 'T', status: 'rejeitado',

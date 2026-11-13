@@ -635,7 +635,7 @@ const AgendamentosAdminSection: React.FC = () => {
     reenviosEmAndamento.current.add(id);
     setReenviandoPlanilha(new Set(reenviosEmAndamento.current));
     try {
-      await context.sincronizarPlanilha(id);
+      await context.sincronizarPlanilha(id, context.agendamentos.find(a => a.id === id));
     } finally {
       reenviosEmAndamento.current.delete(id);
       setReenviandoPlanilha(new Set(reenviosEmAndamento.current));

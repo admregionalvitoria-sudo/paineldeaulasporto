@@ -1,273 +1,100 @@
-import React, { createContext, useState, useEffect, ReactNode, useContext } from 'react';
-import { 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword,
-  signOut, 
-  onAuthStateChanged, 
-  User as FirebaseUser,
-  getAuth
-} from 'firebase/auth';
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { doc, getDoc, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
+import React, { createContext, useState, useEffect, useRef, ReactNode, useContext } from 'react';
+import { signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, User as FirebaseUser, getAuth } from 'firebase/auth';
+import { initializeApp, getApps } from 'firebase/app';
+import { doc, getDocFromServer, getDocFromCache, setDoc, deleteDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db, firebaseConfig } from '../firebase';
 import { UserProfile, UserRole, AuthContextType } from '../types';
+import { perfilAutorizado, permitePapel, mensagemErroLogin, PAPEIS_VALIDOS, SEM_ACESSO } from '../utils/autorizacao';
 
 export interface ExtendedAuthContextType extends AuthContextType {
   criarUsuario: (nome: string, email: string, pass: string, role: UserRole) => Promise<UserProfile>;
   excluirUsuario: (uid: string) => Promise<void>;
 }
-
 const AuthContext = createContext<ExtendedAuthContextType | undefined>(undefined);
-
-// App secundário para criar usuários sem deslogar o administrador atual
+const SESSION_STORAGE_KEY = 'porto_session_user';
 function getSecondaryAuth() {
-  const secondaryAppName = 'SecondaryAuthApp';
-  let secondaryApp;
-  const existingApps = getApps();
-  const found = existingApps.find(a => a.name === secondaryAppName);
-  if (found) {
-    secondaryApp = found;
-  } else {
-    secondaryApp = initializeApp(firebaseConfig, secondaryAppName);
-  }
-  return getAuth(secondaryApp);
+  const name = 'SecondaryAuthApp';
+  return getAuth(getApps().find(a => a.name === name) || initializeApp(firebaseConfig, name));
 }
-
+async function carregarPerfil(user: FirebaseUser): Promise<UserProfile> {
+  const referencia = doc(db, 'porto', 'dados', 'usuarios', user.uid);
+  let snapshot;
+  try {
+    snapshot = await getDocFromServer(referencia);
+  } catch (erroServidor) {
+    // Sem rede ou com a cota do banco esgotada, vale o perfil já baixado neste aparelho.
+    try { snapshot = await getDocFromCache(referencia); }
+    catch { throw erroServidor; }
+  }
+  const perfil = snapshot.exists() ? { ...snapshot.data(), uid: user.uid, email: user.email || '' } as UserProfile : null;
+  if (!perfilAutorizado(user.uid, perfil)) throw new Error(SEM_ACESSO);
+  return perfil;
+}
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
-  const SESSION_STORAGE_KEY = 'porto_session_user';
-
-  // Inicializa imediatamente com a sessão salva em cache para evitar flash de logout
-  const [usuarioAtual, setUsuarioAtual] = useState<UserProfile | null>(() => {
-    try {
-      const saved = localStorage.getItem(SESSION_STORAGE_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.email && parsed.ativo !== false) {
-          return parsed;
-        }
-      }
-    } catch (e) {
-      console.warn("Erro ao ler sessão local:", e);
-    }
-    return null;
-  });
-
-  const [loading, setLoading] = useState(false);
-
+  const [perfil, setPerfil] = useState<UserProfile | null>(null);
+  const [loading, setLoading] = useState(true);
+  const loginEmCurso = useRef(false);
+  const usuarioAtual = perfilAutorizado(auth.currentUser?.uid, perfil) ? perfil : null;
   const persistUserSession = (user: UserProfile | null) => {
-    setUsuarioAtual(user);
+    setPerfil(user);
     try {
-      if (user) {
-        localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(user));
-      } else {
-        localStorage.removeItem(SESSION_STORAGE_KEY);
-      }
-    } catch (e) {
-      console.warn("Erro ao gravar sessão local:", e);
-    }
+      if (user) localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(user));
+      else localStorage.removeItem(SESSION_STORAGE_KEY);
+    } catch { /* Armazenamento local não concede acesso. */ }
   };
-
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (fbUser: FirebaseUser | null) => {
-      if (!fbUser) {
-        // Se deslogou no Firebase, verifica se não há sessão mestre local
-        const localSaved = localStorage.getItem(SESSION_STORAGE_KEY);
-        if (!localSaved) {
-          setUsuarioAtual(null);
-        }
-        setLoading(false);
-        return;
-      }
-
+    let versao = 0;
+    const unsub = onAuthStateChanged(auth, async user => {
+      const atual = ++versao;
+      // O login explícito valida o perfil e mantém a tela montada para mostrar erros.
+      if (loginEmCurso.current) return;
+      setLoading(true);
+      persistUserSession(null);
+      if (!user) { setLoading(false); return; }
       try {
-        const emailLower = (fbUser.email || '').toLowerCase();
-        const isSuperAdmin = emailLower === 'admin@senai.br' || emailLower === 'admregionalvitoria@gmail.com';
-
-        const userDocRef = doc(db, 'porto', 'dados', 'usuarios', fbUser.uid);
-        const userDoc = await getDoc(userDocRef);
-
-        let profile: UserProfile;
-
-        if (userDoc.exists()) {
-          const data = userDoc.data();
-          profile = {
-            uid: fbUser.uid,
-            email: fbUser.email || '',
-            nome: data.nome || fbUser.displayName || fbUser.email?.split('@')[0] || (isSuperAdmin ? 'Administrador Geral SENAI' : 'Usuário'),
-            role: isSuperAdmin ? 'super_admin' : ((data.role as UserRole) || 'admin'),
-            ativo: data.ativo ?? true,
-            criadoEm: data.criadoEm
-          };
-        } else {
-          profile = {
-            uid: fbUser.uid,
-            email: fbUser.email || '',
-            nome: isSuperAdmin ? 'Administrador Geral SENAI' : (fbUser.displayName || 'Administrador'),
-            role: isSuperAdmin ? 'super_admin' : 'admin',
-            ativo: true,
-            criadoEm: serverTimestamp()
-          };
-
-          try {
-            await setDoc(userDocRef, {
-              email: profile.email,
-              nome: profile.nome,
-              role: profile.role,
-              ativo: profile.ativo,
-              criadoEm: serverTimestamp()
-            });
-          } catch (docErr) {
-            console.warn("Aviso ao salvar perfil no Firestore:", docErr);
-          }
+        const novoPerfil = await carregarPerfil(user);
+        if (atual === versao && auth.currentUser?.uid === user.uid) persistUserSession(novoPerfil);
+      } catch (erro: any) {
+        if (atual === versao && auth.currentUser?.uid === user.uid) {
+          persistUserSession(null);
+          // Só encerra a sessão quando a conta realmente não tem acesso; falha de rede não desloga.
+          if (erro?.message === SEM_ACESSO) await signOut(auth).catch(() => {});
         }
-
-        persistUserSession(profile);
-      } catch (err) {
-        console.error("Erro ao carregar perfil do usuário:", err);
-        const emailLower = (fbUser.email || '').toLowerCase();
-        const isSuperAdmin = emailLower === 'admin@senai.br' || emailLower === 'admregionalvitoria@gmail.com';
-        const fallbackProfile: UserProfile = {
-          uid: fbUser.uid,
-          email: fbUser.email || '',
-          nome: isSuperAdmin ? 'Administrador Geral SENAI' : 'Usuário SENAI',
-          role: isSuperAdmin ? 'super_admin' : 'admin',
-          ativo: true
-        };
-        persistUserSession(fallbackProfile);
-      } finally {
-        setLoading(false);
-      }
+      } finally { if (atual === versao) setLoading(false); }
     });
-
-    return () => unsub();
+    return () => { versao++; unsub(); };
   }, []);
-
-  const login = async (emailInput: string, pass: string) => {
-    setLoading(true);
-    const email = emailInput.trim();
-    const emailLower = email.toLowerCase();
-    const isMasterAdmin = emailLower === 'admin@senai.br' || emailLower === 'admregionalvitoria@gmail.com';
-
-    // Perfil mestre pré-configurado
-    const masterProfile: UserProfile = {
-      uid: 'master-' + (emailLower === 'admin@senai.br' ? 'admin-senai' : 'adm-regional'),
-      email: email,
-      nome: emailLower === 'admregionalvitoria@gmail.com' ? 'Proprietário do Projeto (Admin)' : 'Administrador Geral SENAI',
-      role: 'super_admin',
-      ativo: true
-    };
-
-    try {
-      const userCred = await signInWithEmailAndPassword(auth, email, pass);
-      const uid = userCred.user.uid;
-
-      // Carrega ou inicializa perfil imediatamente
-      let finalProfile: UserProfile = {
-        uid: uid,
-        email: email,
-        nome: isMasterAdmin ? masterProfile.nome : (userCred.user.displayName || email.split('@')[0]),
-        role: isMasterAdmin ? 'super_admin' : 'admin',
-        ativo: true
-      };
-
-      try {
-        const userDocRef = doc(db, 'porto', 'dados', 'usuarios', uid);
-        const userDoc = await getDoc(userDocRef);
-        if (userDoc.exists()) {
-          const data = userDoc.data();
-          finalProfile = {
-            uid: uid,
-            email: email,
-            nome: data.nome || finalProfile.nome,
-            role: isMasterAdmin ? 'super_admin' : ((data.role as UserRole) || 'admin'),
-            ativo: data.ativo ?? true,
-            criadoEm: data.criadoEm
-          };
-        } else {
-          await setDoc(userDocRef, {
-            email: finalProfile.email,
-            nome: finalProfile.nome,
-            role: finalProfile.role,
-            ativo: true,
-            criadoEm: serverTimestamp()
-          });
-        }
-      } catch (docErr) {
-        console.warn("Aviso ao sincronizar documento do usuário no Firestore:", docErr);
-      }
-
-      persistUserSession(finalProfile);
-      setLoading(false);
-      return;
-    } catch (err: any) {
-      console.warn("Tentativa de signInWithEmailAndPassword falhou, avaliando auto-provisionamento:", err.code);
-
-      // Tratamento especial para conta mestre
-      if (isMasterAdmin) {
-        // Tenta criar no Firebase Auth se não existir
-        try {
-          const userCred = await createUserWithEmailAndPassword(auth, email, pass);
-          const uid = userCred.user.uid;
-          const createdProfile: UserProfile = {
-            uid: uid,
-            email: email,
-            nome: masterProfile.nome,
-            role: 'super_admin',
-            ativo: true
-          };
-
-          try {
-            const userDocRef = doc(db, 'porto', 'dados', 'usuarios', uid);
-            await setDoc(userDocRef, {
-              email: email,
-              nome: createdProfile.nome,
-              role: 'super_admin',
-              ativo: true,
-              criadoEm: serverTimestamp()
-            });
-          } catch (e) {
-            console.warn("Aviso ao criar doc no Firestore:", e);
-          }
-
-          persistUserSession(createdProfile);
-          setLoading(false);
-          return;
-        } catch (createErr: any) {
-          console.warn("Erro ao auto-criar conta mestre no Firebase Auth:", createErr.code);
-
-          // Se a senha informada for a mestre (Findes@20) ou se já existir, autoriza a sessão mestre diretamente
-          if (pass === 'Findes@20' || isMasterAdmin) {
-            persistUserSession(masterProfile);
-            setLoading(false);
-            return;
-          }
-        }
-      }
-
-      setLoading(false);
-      throw err;
-    }
-  };
-
-  const logout = async () => {
-    try {
-      await signOut(auth);
-    } catch (e) {
-      console.warn("Aviso ao deslogar do Firebase:", e);
-    }
+  const login = async (email: string, pass: string) => {
+    loginEmCurso.current = true;
     persistUserSession(null);
+    let autenticado: FirebaseUser | undefined;
+    try {
+      const credencial = await signInWithEmailAndPassword(auth, email.trim(), pass);
+      autenticado = credencial.user;
+      const novoPerfil = await carregarPerfil(autenticado);
+      if (auth.currentUser?.uid !== autenticado.uid) throw new Error(SEM_ACESSO);
+      persistUserSession(novoPerfil);
+    } catch (erro: any) {
+      persistUserSession(null);
+      if (autenticado && auth.currentUser?.uid === autenticado.uid) await signOut(auth).catch(() => {});
+      throw new Error(mensagemErroLogin(erro));
+    } finally { loginEmCurso.current = false; setLoading(false); }
   };
-
-  const temPermissao = (papeisPermitidos: UserRole[]): boolean => {
-    if (!usuarioAtual || !usuarioAtual.ativo) return false;
-    const emailLower = (usuarioAtual.email || '').toLowerCase();
-    if (usuarioAtual.role === 'super_admin' || emailLower === 'admin@senai.br' || emailLower === 'admregionalvitoria@gmail.com') {
-      return true;
-    }
-    return papeisPermitidos.includes(usuarioAtual.role);
+  const logout = async () => {
+    persistUserSession(null);
+    await signOut(auth);
   };
-
+  const temPermissao = (papeis: UserRole[]) => !loading && permitePapel(auth.currentUser?.uid, usuarioAtual, papeis);
+  const exigirAdmin = async (role?: UserRole) => {
+    const user = auth.currentUser;
+    if (!user) throw new Error(SEM_ACESSO);
+    const atual = await carregarPerfil(user);
+    if (auth.currentUser?.uid !== user.uid || !['admin', 'super_admin'].includes(atual.role)) throw new Error(SEM_ACESSO);
+    if (role !== undefined && (!PAPEIS_VALIDOS.includes(role) || (role === 'super_admin' && atual.role !== 'super_admin'))) throw new Error('Sem permissão para conceder este papel.');
+    return atual;
+  };
   const criarUsuario = async (nome: string, email: string, pass: string, role: UserRole): Promise<UserProfile> => {
+    const caller = await exigirAdmin(role);
     const cleanEmail = email.trim().toLowerCase();
     const cleanNome = nome.trim();
 
@@ -288,12 +115,15 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const data = await response.json();
         return data.usuario;
       }
-    } catch (apiErr) {
+      if (response.status < 500) throw Object.assign(new Error('Não foi possível criar a conta. Verifique os dados e suas permissões.'), { semFallback: true });
+    } catch (apiErr: any) {
+      if (apiErr.semFallback) throw apiErr;
       console.warn("Backend /api/usuarios indisponível, usando criação via client SDK:", apiErr);
     }
 
     // 2. Fallback via Secondary Auth App
     try {
+      await exigirAdmin(role);
       const secAuth = getSecondaryAuth();
       const userCredential = await createUserWithEmailAndPassword(secAuth, cleanEmail, pass);
       const newUid = userCredential.user.uid;
@@ -305,12 +135,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         nome: cleanNome,
         role,
         ativo: true,
-        criadoPor: usuarioAtual?.email || 'admin@senai.br',
+        criadoPor: caller.email,
         criadoEm: serverTimestamp()
       };
 
-      await setDoc(userDocRef, newProfile);
-      await signOut(secAuth); // Garante que o app secundário é limpo
+      try {
+        await exigirAdmin(role);
+        await setDoc(userDocRef, newProfile);
+      } finally { await signOut(secAuth); }
 
       return newProfile;
     } catch (secErr: any) {
@@ -322,6 +154,10 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const excluirUsuario = async (uid: string): Promise<void> => {
+    const caller = await exigirAdmin();
+    if (uid === caller.uid) throw new Error('Você não pode excluir sua própria conta.');
+    const alvo = await getDocFromServer(doc(db, 'porto', 'dados', 'usuarios', uid));
+    if (alvo.data()?.role === 'super_admin' && caller.role !== 'super_admin') throw new Error('Sem permissão para excluir esta conta.');
     // 1. Tenta deletar pelo backend API
     try {
       const currentUser = auth.currentUser;
@@ -334,13 +170,14 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         }
       });
 
-      if (response.ok) {
-        return;
-      }
-    } catch (apiErr) {
+      if (response.ok) return;
+      if (response.status < 500) throw Object.assign(new Error('Não foi possível excluir a conta.'), { semFallback: true });
+    } catch (apiErr: any) {
+      if (apiErr.semFallback) throw apiErr;
       console.warn("Backend /api/usuarios DELETE indisponível, usando exclusão direta no Firestore:", apiErr);
     }
 
+    await exigirAdmin();
     // 2. Exclusão direta no Firestore
     const userDocRef = doc(db, 'porto', 'dados', 'usuarios', uid);
     await deleteDoc(userDocRef);

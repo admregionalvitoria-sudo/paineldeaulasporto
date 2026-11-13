@@ -7,6 +7,7 @@ import { dataLocal, dataISO } from '../utils/datas';
 import { validarContatoAgendamento, normalizarTelefone, whatsappAutorizado } from '../utils/notificacaoAgendamento.mjs';
 import React, { createContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { upload as vercelBlobUpload } from '@vercel/blob/client';
+import { obterIdToken, excluirBlob } from '../utils/tokenAutenticacao';
 import { Aula, Anuncio, AgendamentoSala, ReservaPublica, ModoAgendamentos, DataContextType, AuditAction, PainelClienteConfig, ObservacaoLimpeza, ManutencaoAmbiente, Alerta } from '../types';
 import { db, storage, auth } from '../firebase';
 import { formatarUnidadeCurricular } from '../utils/curricularUnits';
@@ -258,7 +259,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
             if (!reservasAtuais.current.some(reserva => reserva.id === id && reserva.planilhaSyncErro?.trim())) continue;
             // Marcar antes do POST impede que o diagnóstico de falha gere outra tentativa.
             reenviosPlanilhaTentados.add(id);
-            await sincronizarPlanilha(id);
+            await sincronizarPlanilha(id, reservasAtuais.current.find(reserva => reserva.id === id));
           }
         }).catch(err => console.warn('Aviso ao reenviar agendamentos à planilha:', err));
       }
@@ -647,6 +648,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const uploadMediaFile = async (file: File): Promise<{ src: string; type: 'image' | 'video'; storagePath?: string; name: string }> => {
+    const idToken = await obterIdToken();
     const isVideo = file.type.startsWith('video/') || /\.(mp4|webm|mov|ogg)$/i.test(file.name);
     const mediaType: 'image' | 'video' = isVideo ? 'video' : 'image';
     const timestamp = Date.now();
@@ -678,6 +680,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const blob = await vercelBlobUpload(storagePath, file, {
         access: 'public',
         handleUploadUrl: '/api/upload',
+        clientPayload: JSON.stringify({ idToken }),
       });
       return { src: blob.url, type: mediaType, storagePath: blob.url, name: file.name };
     } catch (vercelError) {
@@ -745,7 +748,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const anuncio = anuncios.find(a => a.id === id);
       if (storagePath && (storagePath.includes('blob.vercel-storage.com') || storagePath.startsWith('http'))) {
         try {
-          await fetch(`/api/upload?url=${encodeURIComponent(storagePath)}`, { method: 'DELETE' });
+          await excluirBlob(storagePath);
         } catch (blobErr) {
           console.warn("Erro ao deletar do Vercel Blob:", blobErr);
         }
@@ -765,7 +768,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     try {
       if (oldStoragePath && (oldStoragePath.includes('blob.vercel-storage.com') || oldStoragePath.startsWith('http'))) {
         try {
-          await fetch(`/api/upload?url=${encodeURIComponent(oldStoragePath)}`, { method: 'DELETE' });
+          await excluirBlob(oldStoragePath);
         } catch (blobErr) {
           console.warn("Erro ao excluir mídia anterior do Vercel Blob:", blobErr);
         }
@@ -800,7 +803,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       snapshot.forEach(d => {
         const data = d.data();
         if (data.storagePath && (data.storagePath.includes('blob.vercel-storage.com') || data.storagePath.startsWith('http'))) {
-          fetch(`/api/upload?url=${encodeURIComponent(data.storagePath)}`, { method: 'DELETE' }).catch(() => {});
+          void excluirBlob(data.storagePath).catch(() => {});
         }
         deletePromises.push(deleteDoc(d.ref));
       });
@@ -1193,10 +1196,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     await updateDoc(doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'manutencoes', id), { ativo: false });
     await registrarLog('LIBERAR_MANUTENCAO', 'manutencao', id, 'Ambiente liberado da manutenção');
   };
-  const sincronizarPlanilha = async (id: string) => {
+  const sincronizarPlanilha = async (id: string, dados?: Partial<AgendamentoSala>) => {
+    const dadosDisponiveis = dados || agendamentos.find(a => a.id === id);
     const referencia = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos', id);
     try {
-      const resposta = await fetch('/api/agendamento-planilha', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agendamentoId: id }), signal: AbortSignal.timeout(30000) });
+      const idToken = await auth.currentUser?.getIdToken();
+      const resposta = await fetch('/api/agendamento-planilha', { method: 'POST', headers: { 'Content-Type': 'application/json', ...(idToken ? { Authorization: `Bearer ${idToken}` } : {}) }, body: JSON.stringify({ agendamentoId: id, ...(dadosDisponiveis ? { dados: dadosDisponiveis } : {}) }), signal: AbortSignal.timeout(30000) });
       if (!resposta.ok) {
         const retorno = await resposta.json().catch(() => ({}));
         const mensagem = typeof retorno.error === 'string' && retorno.error.startsWith('Planilha') ? retorno.error : `Falha ao sincronizar planilha (HTTP ${resposta.status})`;
@@ -1285,17 +1290,18 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       if (estaEmManutencao(dados.sala, dados.data, manutencoes)) throw new Error('Ambiente em manutenção nesta data.');
       const agendamentosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'agendamentos');
       const docRef = doc(agendamentosCollectionRef);
-      await gravarReserva(docRef.id, {
+      const payload = {
         ...dadosSemContato,
         emailSolicitante: dados.emailSolicitante.trim(),
         notificarWhatsapp: dados.notificarWhatsapp === true,
         ...(dados.notificarWhatsapp ? { telefoneSolicitante: normalizarTelefone(telefoneSolicitante), consentimentoWhatsappEm, consentimentoWhatsappTexto } : {}),
         sala: formatarNomeSala(dados.sala) || dados.sala,
-        status: 'pendente',
+        status: 'pendente' as const,
         criadoEm: serverTimestamp(),
         timestamp: Date.now()
-      }, undefined, true);
-      void sincronizarPlanilha(docRef.id);
+      };
+      await gravarReserva(docRef.id, payload, undefined, true);
+      void sincronizarPlanilha(docRef.id, payload);
       return docRef.id;
     } catch (e: any) {
       console.error("Erro ao registrar solicitação de agendamento:", e);
@@ -1319,7 +1325,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         aprovadoEm: serverTimestamp(),
       }, agendamento);
 
-      void sincronizarPlanilha(id);
+      void sincronizarPlanilha(id, { ...agendamento, status: 'aprovado', observacaoDecisao: observacaoAprovacao.trim() });
       if (criarAulaAutomatica) {
         const inicioPadrao = agendamento.horarioInicio || (
           agendamento.turno === 'Matutino' ? '07:00' :
@@ -1376,7 +1382,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         motivoRejeicao: motivoRejeicao || 'Não autorizado pela coordenação'
       }, agendamento);
 
-      void sincronizarPlanilha(id);
+      void sincronizarPlanilha(id, { ...agendamento, status: 'rejeitado', motivoRejeicao: motivoRejeicao.trim(), observacaoDecisao: motivoRejeicao.trim() });
       await registrarLog(
         'REJEITAR_AGENDAMENTO',
         'agendamento',

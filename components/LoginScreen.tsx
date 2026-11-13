@@ -28,14 +28,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onSuccess, onReturnToDashboar
       await login(email.trim(), password);
       onSuccess();
     } catch (err: any) {
-      console.error("Erro no login:", err);
-      let msg = 'Erro ao realizar login. Verifique suas credenciais.';
-      if (err.code === 'auth/invalid-credential' || err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password') {
-        msg = 'E-mail ou senha incorretos.';
-      } else if (err.code === 'auth/too-many-requests') {
-        msg = 'Muitas tentativas malsucedidas. Tente novamente mais tarde.';
-      }
-      setError(msg);
+      setError(err.message || 'Não foi possível entrar. Verifique suas credenciais.');
     } finally {
       setIsSubmitting(false);
     }

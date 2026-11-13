@@ -1,3 +1,5 @@
+import { verificarUsuario } from '../lib/autenticacaoApi.mjs';
+const papeisMidia = ['super_admin', 'admin', 'comunicacao', 'midia'];
 import { handleUpload } from '@vercel/blob/client';
 import { put, del } from '@vercel/blob';
 
@@ -22,14 +24,14 @@ export default async function handler(req, res) {
 
   if (req.method === 'DELETE') {
     try {
+      await verificarUsuario(req, papeisMidia);
       const url = req.query.url || req.body?.url;
       if (url) {
         await del(url, { token });
       }
       return res.status(200).json({ success: true });
     } catch (err) {
-      console.warn('Delete blob error:', err);
-      return res.status(200).json({ success: false, error: err.message });
+      return res.status(err.status || 500).json({ error: err.status ? err.message : 'Erro ao excluir arquivo.' });
     }
   }
 
@@ -43,7 +45,10 @@ export default async function handler(req, res) {
           body: req.body,
           request: req,
           token: token,
-          onBeforeGenerateToken: async (pathname) => {
+          onBeforeGenerateToken: async (pathname, clientPayload) => {
+            let payload;
+            try { payload = JSON.parse(clientPayload || '{}'); } catch {}
+            await verificarUsuario({ headers: { authorization: payload?.idToken ? `Bearer ${payload.idToken}` : '' } }, papeisMidia);
             return {
               allowedContentTypes: [
                 'image/jpeg',
@@ -67,13 +72,13 @@ export default async function handler(req, res) {
 
         return res.status(200).json(jsonResponse);
       } catch (error) {
-        console.error('Erro handleUpload Vercel Blob:', error);
-        return res.status(400).json({ error: error.message || 'Erro ao gerar token do Vercel Blob' });
+        return res.status(error.status || 400).json({ error: error.status ? error.message : 'Erro ao autorizar upload.' });
       }
     }
 
     // 2. Upload via stream tradicional
     try {
+      await verificarUsuario(req, papeisMidia);
       const filename = req.query.filename || req.headers['x-filename'] || `media_${Date.now()}`;
       if (!token) {
         return res.status(500).json({ 
@@ -93,8 +98,7 @@ export default async function handler(req, res) {
         contentType: blob.contentType,
       });
     } catch (error) {
-      console.error('Erro no upload Vercel Blob:', error);
-      return res.status(500).json({ error: error.message || 'Erro ao processar upload no Vercel Blob' });
+      return res.status(error.status || 500).json({ error: error.status ? error.message : 'Erro ao processar upload.' });
     }
   }
 

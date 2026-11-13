@@ -1,3 +1,4 @@
+import { verificarUsuario, PAPEIS_VALIDOS } from '../lib/autenticacaoApi.mjs';
 import admin from 'firebase-admin';
 
 function getAdminApp() {
@@ -33,36 +34,30 @@ export default async function handler(req, res) {
     return res.status(200).end();
   }
 
-  // Validar Token de Autorização do Chamador
-  const authHeader = req.headers.authorization || '';
-  if (!authHeader.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'Autorização necessária' });
-  }
-
-  const idToken = authHeader.split('Bearer ')[1];
-  let callerUid = '';
-  let callerEmail = '';
-
-  try {
-    const decodedToken = await firebaseAdmin.auth().verifyIdToken(idToken);
-    callerUid = decodedToken.uid;
-    callerEmail = (decodedToken.email || '').toLowerCase();
-  } catch (err) {
-    return res.status(401).json({ error: 'Token de autenticação inválido ou expirado' });
-  }
-
-  // Verificar se o chamador possui papel de administrador
+  let caller;
+  try { caller = await verificarUsuario(req, ['super_admin', 'admin']); }
+  catch (err) { return res.status(err.status || 401).json({ error: 'Autenticação ou permissão insuficiente.' }); }
+  const callerUid = caller.uid;
+  const callerEmail = caller.email;
   const db = firebaseAdmin.firestore();
-  const callerDoc = await db.collection('porto').doc('dados').collection('usuarios').doc(callerUid).get();
-  const callerRole = callerDoc.exists ? callerDoc.data()?.role : '';
-  const isAuthorized = 
-    callerRole === 'super_admin' || 
-    callerRole === 'admin' || 
-    callerEmail === 'admin@senai.br' || 
-    callerEmail === 'admregionalvitoria@gmail.com';
 
-  if (!isAuthorized) {
-    return res.status(403).json({ error: 'Apenas Administradores podem gerenciar usuários' });
+  if (['POST', 'PUT'].includes(req.method)) {
+    const role = req.body?.role;
+    if ((req.method === 'POST' || role !== undefined) && !PAPEIS_VALIDOS.includes(role)) {
+      return res.status(400).json({ error: 'Papel de usuário inválido.' });
+    }
+    if (role === 'super_admin' && caller.role !== 'super_admin') {
+      return res.status(403).json({ error: 'Somente super_admin pode conceder este papel.' });
+    }
+  }
+  // Um admin também não pode rebaixar, desativar ou excluir um super_admin.
+  if (['PUT', 'DELETE'].includes(req.method) && caller.role !== 'super_admin') {
+    const uid = req.body?.uid || req.query?.uid;
+    if (typeof uid !== 'string' || !uid || uid.includes('/')) return res.status(400).json({ error: 'uid inválido.' });
+    try {
+      const alvo = await db.doc(`porto/dados/usuarios/${uid}`).get();
+      if (alvo.data()?.role === 'super_admin') return res.status(403).json({ error: 'Somente super_admin pode alterar esta conta.' });
+    } catch { return res.status(500).json({ error: 'Não foi possível verificar a conta.' }); }
   }
 
   if (req.method === 'GET') {
@@ -71,7 +66,7 @@ export default async function handler(req, res) {
       const usuarios = snapshot.docs.map(d => ({ uid: d.id, ...d.data() }));
       return res.status(200).json({ usuarios });
     } catch (err) {
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'Não foi possível concluir a operação de usuários.' });
     }
   }
 
@@ -104,8 +99,12 @@ export default async function handler(req, res) {
         usuario: { uid: userRecord.uid, email, nome, role, ativo: true } 
       });
     } catch (err) {
-      console.error("Erro ao criar usuário:", err);
-      return res.status(500).json({ error: err.message || 'Erro ao criar usuário' });
+      const codigo = err?.code || err?.errorInfo?.code || '';
+      if (codigo === 'auth/email-already-exists') return res.status(400).json({ error: 'Já existe uma conta com este e-mail.' });
+      if (codigo === 'auth/invalid-password') return res.status(400).json({ error: 'Senha inválida. Use pelo menos 6 caracteres.' });
+      if (codigo === 'auth/invalid-email') return res.status(400).json({ error: 'E-mail inválido.' });
+      console.error('Erro ao criar usuário:', codigo || 'erro interno');
+      return res.status(500).json({ error: 'Não foi possível criar a conta.' });
     }
   }
 
@@ -133,7 +132,7 @@ export default async function handler(req, res) {
 
       return res.status(200).json({ success: true });
     } catch (err) {
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'Não foi possível concluir a operação de usuários.' });
     }
   }
 
@@ -161,7 +160,7 @@ export default async function handler(req, res) {
 
       return res.status(200).json({ success: true, message: 'Usuário excluído com sucesso' });
     } catch (err) {
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({ error: 'Não foi possível concluir a operação de usuários.' });
     }
   }
 
