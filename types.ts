@@ -146,6 +146,7 @@ export interface DataContextType {
   deleteAula: (id: string) => Promise<void>;
   clearAulas: () => void;
   clearAulasHistory: () => Promise<void>;
+  carregarHistoricoAulas: () => Promise<Aula[]>;
   addAnuncio: (anuncio: Omit<Anuncio, 'id'>) => Promise<void>;
   deleteAnuncio: (id: string, storagePath?: string) => Promise<void>;
   replaceAnuncio: (id: string, newAnuncio: Omit<Anuncio, 'id'>, oldStoragePath?: string) => Promise<void>;

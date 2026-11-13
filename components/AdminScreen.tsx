@@ -1235,11 +1235,23 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ aba, onAba, onNavigate }) => 
 
   const hojeBR = dataBR(dataLocal());
 
+  // O histórico não fica carregado o tempo todo: é lido só quando esta seção é aberta.
+  const [historico, setHistorico] = useState<Aula[] | null>(null);
+  const [erroHistorico, setErroHistorico] = useState('');
+  const carregarHistorico = React.useCallback(async () => {
+    setErroHistorico('');
+    try { setHistorico(await context.carregarHistoricoAulas()); }
+    catch { setErroHistorico('Não foi possível carregar o histórico. Verifique a conexão e tente de novo.'); }
+  }, [context.carregarHistoricoAulas]);
+  React.useEffect(() => { if (adminTab === 'historico') void carregarHistorico(); }, [adminTab]);
+  const carregandoHistorico = adminTab === 'historico' && historico === null && !erroHistorico;
+
   const aulasFiltradas = useMemo(() => {
     const todayIso = dataLocal();
     const turma = searchTurma.trim().toLowerCase();
     const instrutor = searchInstrutor.trim().toLowerCase();
-    const lista = context.aulas.filter(aula => {
+    const origem = adminTab === 'historico' ? (historico || []) : context.aulas;
+    const lista = origem.filter(aula => {
       const passada = dataISO(aula.data) < todayIso;
       if (adminTab === 'historico' ? !passada : passada) return false;
       if (searchDate && !aula.data.includes(searchDate)) return false;
@@ -1251,7 +1263,7 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ aba, onAba, onNavigate }) => 
     // Cronograma: a aula mais próxima primeiro. Histórico: a mais recente primeiro.
     const direcao = adminTab === 'historico' ? -1 : 1;
     return lista.sort((a, b) => direcao * (dataISO(a.data).localeCompare(dataISO(b.data)) || (a.inicio || '').localeCompare(b.inicio || '')));
-  }, [context.aulas, searchDate, searchTurma, searchInstrutor, filterShift, adminTab, formattedDate]);
+  }, [context.aulas, historico, searchDate, searchTurma, searchInstrutor, filterShift, adminTab, formattedDate]);
 
   React.useEffect(() => { setLimiteLinhas(100); }, [adminTab, searchDate, searchTurma, searchInstrutor, filterShift]);
 
@@ -1260,7 +1272,9 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ aba, onAba, onNavigate }) => 
       texto: `${formatarNomeSala(aula.sala)} · ${aula.data} · ${aula.inicio}${aula.fim ? `–${aula.fim}` : ''}. Ela sai do painel das TVs.`,
       confirmar: 'Excluir aula', perigo: true,
     });
-    if (ok) context.deleteAula(aula.id);
+    if (!ok) return;
+    await context.deleteAula(aula.id);
+    if (adminTab === 'historico') void carregarHistorico();
   };
 
   const cabecalho = CABECALHO_DA_ABA[adminTab];
@@ -1274,7 +1288,12 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ aba, onAba, onNavigate }) => 
           <EditModal
             aula={editingAula}
             onClose={() => setEditingAula(null)}
-            onSave={d => { context.updateAula(editingAula.id, d); setEditingAula(null); }}
+            onSave={d => {
+              void Promise.resolve(context.updateAula(editingAula.id, d))
+                .then(() => { if (adminTab === 'historico') void carregarHistorico(); })
+                .catch(() => { /* o aviso de conflito já foi mostrado */ });
+              setEditingAula(null);
+            }}
           />
         )}
         {addingAula && (
@@ -1428,7 +1447,16 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ aba, onAba, onNavigate }) => 
                 </tbody>
               </table>
 
-              {aulasFiltradas.length === 0 && (
+              {carregandoHistorico && (
+                <p role="status" className="px-4 py-14 text-center text-sm text-slate-500">Carregando o histórico…</p>
+              )}
+              {erroHistorico && adminTab === 'historico' && (
+                <div role="alert" className="px-4 py-10 text-center">
+                  <p className="text-sm font-semibold text-red-700">{erroHistorico}</p>
+                  <button type="button" onClick={() => void carregarHistorico()} className="mt-3 min-h-11 rounded-xl border border-slate-300 px-4 text-sm font-bold hover:bg-slate-50">Tentar de novo</button>
+                </div>
+              )}
+              {aulasFiltradas.length === 0 && !carregandoHistorico && !(erroHistorico && adminTab === 'historico') && (
                 <div className="px-4 py-14 text-center">
                   <p className="font-bold">{temFiltro ? 'Nenhuma aula com esses filtros' : adminTab === 'historico' ? 'Ainda não há aulas no histórico' : 'Nenhuma aula no cronograma'}</p>
                   <p className="mt-1 text-sm text-slate-500">

@@ -22,3 +22,22 @@ export function dataBR(data: string): string {
   const [ano, mes, dia] = dataISO(data).split('-');
   return `${dia}/${mes}/${ano}`;
 }
+
+/** Período de aulas que cada tipo de tela precisa baixar. */
+export type JanelaAulas = 'painel' | 'limpeza' | 'completa';
+
+/**
+ * - painel (TVs e painel do cliente): só hoje e amanhã.
+ * - limpeza: de 8 dias atrás (a fila olha até 7) até amanhã.
+ * - completa (gestão e agendamento): de 8 dias atrás em diante, para conferir conflitos em qualquer data futura.
+ */
+export function janelaDeAulas(tipo: JanelaAulas, hoje = new Date()): { de: string; ate?: string } {
+  const dia = (deslocamento: number) => {
+    const data = new Date(hoje.getFullYear(), hoje.getMonth(), hoje.getDate());
+    data.setDate(data.getDate() + deslocamento);
+    return dataLocal(data);
+  };
+  if (tipo === 'painel') return { de: dia(0), ate: dia(1) };
+  if (tipo === 'limpeza') return { de: dia(-8), ate: dia(1) };
+  return { de: dia(-8) };
+}

@@ -4,7 +4,7 @@ import { criarAssinaturas } from '../utils/assinaturas';
 import { selecionarReenvios } from '../utils/reenviosPlanilha';
 import { AuthContext } from './AuthContext';
 import { planejarImportacaoAulas } from '../utils/importacaoAulas';
-import { dataLocal, dataISO } from '../utils/datas';
+import { dataLocal, dataISO, janelaDeAulas, type JanelaAulas } from '../utils/datas';
 import { validarContatoAgendamento, normalizarTelefone, whatsappAutorizado } from '../utils/notificacaoAgendamento.mjs';
 import React, { createContext, useState, useEffect, ReactNode, useMemo } from 'react';
 import { upload as vercelBlobUpload } from '@vercel/blob/client';
@@ -27,7 +27,9 @@ import {
   getDocs,
   getDoc,
   serverTimestamp,
-  orderBy
+  orderBy,
+  where,
+  getCountFromServer
 } from 'firebase/firestore';
 import { 
   ref, 
@@ -46,6 +48,9 @@ export const DataContext = createContext<ExtendedDataContextType | undefined>(un
 
 // Compartilhado entre remontagens do provider durante esta sessão da página.
 let backfillAgendamentosTentado = false;
+let migracaoDataIsoTentada = false;
+/** Aula sem a data em formato pesquisável (AAAA-MM-DD), ou com ela desatualizada. */
+const aulaSemDataIso = (dados: { data?: string; dataIso?: string }) => !!dados.data && dados.dataIso !== dataISO(dados.data);
 const reenviosPlanilhaTentados = new Set<string>();
 let filaReenviosPlanilha = Promise.resolve();
 const aulasComCorrecaoTentada = new Set<string>();
@@ -185,7 +190,13 @@ export const DEFAULT_PAINEL_CLIENTE_CONFIG: PainelClienteConfig = {
   }
 };
 
-export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
+export const DataProvider: React.FC<{ children: ReactNode; janela?: JanelaAulas }> = ({ children, janela = 'completa' }) => {
+  // Vira à meia-noite para as telas que ficam ligadas por dias trocarem o período de aulas.
+  const [diaAtual, setDiaAtual] = useState(() => dataLocal());
+  useEffect(() => {
+    const relogio = setInterval(() => setDiaAtual(atual => (atual === dataLocal() ? atual : dataLocal())), 60000);
+    return () => clearInterval(relogio);
+  }, []);
   const perfil = React.useContext(AuthContext)?.usuarioAtual;
   const perfilRef = React.useRef(perfil);
   perfilRef.current = perfil;
@@ -307,6 +318,52 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const isInitialAulasLoadedRef = React.useRef(false);
   const lastAulasHashRef = React.useRef<string>('');
   const isInitialMetaLoadedRef = React.useRef(false);
+  // null = ainda não se sabe; true = todas as aulas têm `dataIso` e dá para consultar por período.
+  const [aulasPorData, setAulasPorData] = useState<boolean | null>(null);
+  const aulasPorDataRef = React.useRef(false);
+  const aulasRef = () => collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
+
+  /** Aulas de uma faixa de datas, lendo só o necessário quando o banco já tem `dataIso`. */
+  const lerAulas = async (faixa?: { de?: string; antesDe?: string }) => {
+    if (!aulasPorDataRef.current || !faixa) return getDocs(aulasRef());
+    return getDocs(faixa.de
+      ? query(aulasRef(), where('dataIso', '>=', faixa.de))
+      : query(aulasRef(), where('dataIso', '<', faixa.antesDe)));
+  };
+
+  /** Histórico (dias anteriores), carregado só quando a gestão abre essa seção. */
+  const carregarHistoricoAulas = async (): Promise<Aula[]> => {
+    const hoje = dataLocal();
+    const snapshot = await lerAulas({ antesDe: hoje });
+    return snapshot.docs
+      .map(d => {
+        const dados = d.data();
+        return { ...dados, id: d.id, unidade_curricular: formatarUnidadeCurricular(dados.unidade_curricular), sala: formatarNomeSala(dados.sala) || dados.sala || '' } as Aula;
+      })
+      .filter(aula => dataISO(aula.data) < hoje);
+  };
+
+  /** Grava `dataIso` nas aulas que ainda não têm e libera a consulta por período para todas as telas. */
+  const garantirDataIsoDasAulas = async (pendentes: { ref: any; dataIso: string }[] | null) => {
+    const metaRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'sync');
+    let lista = pendentes;
+    if (lista === null) {
+      // Já no modo por período: conferência barata (2 leituras) para achar aula criada por uma tela antiga.
+      const [total, comData] = await Promise.all([
+        getCountFromServer(aulasRef()),
+        getCountFromServer(query(aulasRef(), where('dataIso', '>', ''))),
+      ]);
+      if (total.data().count === comData.data().count) return;
+      const todas = await getDocs(aulasRef());
+      lista = todas.docs.filter(d => aulaSemDataIso(d.data())).map(d => ({ ref: d.ref, dataIso: dataISO(d.data().data) }));
+    }
+    for (let i = 0; i < lista.length; i += 450) {
+      const lote = writeBatch(db);
+      lista.slice(i, i + 450).forEach(item => lote.update(item.ref, { dataIso: item.dataIso }));
+      await lote.commit();
+    }
+    if (!aulasPorDataRef.current) await setDoc(metaRef, { aulasDataIso: true }, { merge: true });
+  };
 
   // Registro de Auditoria no Firestore
   const registrarLog = async (
@@ -448,12 +505,17 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const metaDocRef = doc(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'meta', 'sync');
 
     const unsubMeta = onSnapshot(metaDocRef, (docSnap) => {
+      // Depois que todas as aulas têm `dataIso`, as telas passam a baixar só as aulas recentes.
+      const pronto = docSnap.data()?.aulasDataIso === true;
+      aulasPorDataRef.current = pronto;
+      setAulasPorData(pronto);
       if (!isInitialMetaLoadedRef.current) {
         isInitialMetaLoadedRef.current = true;
         return;
       }
     }, (err) => {
       console.warn("Aviso listener meta sync:", err);
+      setAulasPorData(atual => atual ?? false);
     });
 
     const unsubAmbientes = onSnapshot(ambientesCollectionRef, (snapshot) => {
@@ -466,8 +528,23 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       console.warn("Aviso listener ambientes:", err);
     });
 
-    // Datas legadas DD/MM/AAAA e ISO coexistem: uma faixa em `data` omitiria aulas.
-    const qAulas = query(aulasCollectionRef, orderBy('ordem', 'asc'));
+    return () => {
+      unsubMeta();
+      unsubAmbientes();
+    };
+  }, []);
+
+  // Aulas: o maior gasto de leituras do sistema. Com `dataIso` em todos os documentos, cada tela
+  // baixa só de 8 dias atrás em diante (o /limpeza usa até 7); o histórico é carregado sob demanda.
+  useEffect(() => {
+    if (aulasPorData === null) return;
+    const aulasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
+    const periodo = janelaDeAulas(janela as JanelaAulas);
+    const qAulas = !aulasPorData
+      ? query(aulasCollectionRef, orderBy('ordem', 'asc'))
+      : periodo.ate
+        ? query(aulasCollectionRef, where('dataIso', '>=', periodo.de), where('dataIso', '<=', periodo.ate))
+        : query(aulasCollectionRef, where('dataIso', '>=', periodo.de));
     const unsubAulas = onSnapshot(qAulas, { includeMetadataChanges: true }, (snapshot) => {
       if (snapshot.metadata.fromCache && !navigator.onLine) {
         setIsOffline(true);
@@ -487,7 +564,10 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         const precisaAtualizarSala = formattedSala && d.sala !== formattedSala;
         const precisaAtualizarTurno = d.inicio && d.turno !== turnoCorreto;
 
-        if ((precisaAtualizarUC || precisaAtualizarSala || precisaAtualizarTurno) && navigator.onLine
+        const dataIsoCorreta = dataISO(d.data || '');
+        const precisaDataIso = !!dataIsoCorreta && d.dataIso !== dataIsoCorreta;
+
+        if ((precisaAtualizarUC || precisaAtualizarSala || precisaAtualizarTurno || precisaDataIso) && navigator.onLine
           && podeCorrigir && !aulasComCorrecaoTentada.has(docSnap.id)) {
           // Marcar antes da escrita evita novas tentativas em snapshots concorrentes.
           aulasComCorrecaoTentada.add(docSnap.id);
@@ -502,7 +582,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           if (precisaAtualizarTurno) {
             payload.turno = turnoCorreto;
           }
-          void updateDoc(docSnap.ref, payload).catch(() => {});
+          if (precisaDataIso) payload.dataIso = dataIsoCorreta;
+          // No modo antigo as datas vão em lote (abaixo); aqui só o que não é data.
+          if (aulasPorData || Object.keys(payload).some(chave => chave !== 'dataIso')) {
+            void updateDoc(docSnap.ref, payload).catch(() => {});
+          }
         }
 
         return {
@@ -513,11 +597,19 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
           turno: turnoCorreto
         };
       }) as Aula[];
+      aulasData.sort((a, b) => ((a as any).ordem ?? 0) - ((b as any).ordem ?? 0));
       const currentHash = aulasData.map(a => `${a.id}_${a.turma}_${a.sala}_${a.inicio}_${a.turno}_${a.unidade_curricular}`).join('|');
 
       setAulas(aulasData);
       setLoading(false);
       lastAulasHashRef.current = currentHash;
+
+      // Gestão logada, com dados vindos do servidor: garante `dataIso` em todas as aulas.
+      if (podeCorrigir && navigator.onLine && !snapshot.metadata.fromCache && !snapshot.metadata.hasPendingWrites && !migracaoDataIsoTentada) {
+        migracaoDataIsoTentada = true;
+        const pendentes = aulasPorData ? null : snapshot.docs.filter(d => aulaSemDataIso(d.data())).map(d => ({ ref: d.ref, dataIso: dataISO(d.data().data) }));
+        void garantirDataIsoDasAulas(pendentes).catch(err => console.warn('Aviso ao preparar as datas das aulas:', err));
+      }
     }, (err) => {
       console.error("Erro ao carregar aulas do Firestore:", err);
       if (!navigator.onLine) {
@@ -525,6 +617,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       }
       setLoading(false);
     });
+    return () => unsubAulas();
+  }, [aulasPorData, janela, diaAtual]);
+
+  // Demais listeners em tempo real (coleções pequenas).
+  useEffect(() => {
+    const anunciosCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'anuncios');
+    const limpezaCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'limpeza');
+    const alertasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'alertas');
 
     const unsubAnuncios = onSnapshot(anunciosCollectionRef, (snapshot) => {
       const anunciosData = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id })) as Anuncio[];
@@ -597,9 +697,6 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     });
 
     return () => {
-      unsubMeta();
-      unsubAmbientes();
-      unsubAulas();
       unsubAnuncios();
       unsubManutencoes();
       unsubPainelCliente();
@@ -947,7 +1044,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const aulasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
       const CHUNK_SIZE = 490;
 
-      const currentDocs = await getDocs(aulasCollectionRef);
+      // A importação só mexe de hoje em diante; o histórico nem é lido.
+      const currentDocs = await lerAulas({ de: dataLocal() });
       const plano = planejarImportacaoAulas(currentDocs.docs.map(d => ({ ...d.data(), id: d.id } as Aula)), uniqueAulas, dataLocal());
       const futureAulasFromCsv = plano.inserir;
       const excluirIds = new Set(plano.excluirIds);
@@ -980,7 +1078,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
       futureAulasFromCsv.forEach((aula, index) => {
         const newDocRef = doc(aulasCollectionRef);
-        const aulaComOrdem = { ...aula, ordem: index };
+        const aulaComOrdem = { ...aula, ordem: index, dataIso: dataISO(aula.data) };
         addBatch.set(newDocRef, aulaComOrdem);
         addCount++;
         if (addCount === CHUNK_SIZE) {
@@ -1006,11 +1104,11 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         'IMPORTAR_CSV',
         'csv',
         nomeArquivo,
-        `Planilha importada com ${futureAulasFromCsv.length} aulas. ${plano.preservadas} ajustes manuais e ${plano.historicas} aulas históricas preservados.`
+        `Planilha importada com ${futureAulasFromCsv.length} aulas. ${plano.preservadas} ajustes manuais preservados. Histórico mantido.`
       );
 
       setSyncSource(nomeArquivo);
-      avisar(`${futureAulasFromCsv.length} aulas sincronizadas! ${plano.preservadas} aulas com ajustes manuais preservadas. ${plano.historicas} aulas históricas preservadas.`, 'sucesso');
+      avisar(`${futureAulasFromCsv.length} aulas sincronizadas! ${plano.preservadas} aulas com ajustes manuais preservadas. O histórico foi mantido.`, 'sucesso');
   };
 
   const uploadCSV = async (file: File) => {
@@ -1059,7 +1157,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         throw new Error(msg);
       }
 
-      const sanitizedAula: Partial<Aula> = { ...aula, turno: novoTurno, modificadoManualmente: true };
+      const sanitizedAula: Partial<Aula> & { dataIso?: string } = { ...aula, turno: novoTurno, modificadoManualmente: true };
+      if (novaData) sanitizedAula.dataIso = dataISO(novaData);
       if (sanitizedAula.sala) {
         sanitizedAula.sala = formatarNomeSala(sanitizedAula.sala);
       }
@@ -1130,6 +1229,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         titulo: aulaData.turma,
         descricao: formattedUC,
         ativa: true,
+        dataIso: dataISO(aulaData.data),
         criadaEm: serverTimestamp(),
         ordem: aulas.length
       };
@@ -1160,8 +1260,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   const clearAulas = async () => {
     if (await confirmar("Apagar todas as aulas de hoje em diante?", { texto: "O painel das TVs fica vazio até uma nova planilha ser importada. O histórico de dias anteriores é mantido. Não dá para desfazer.", perigo: true, confirmar: "Apagar cronograma" })) {
         const hojeIso = dataLocal();
-        const aulasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
-        const currentDocs = await getDocs(aulasCollectionRef);
+        const currentDocs = await lerAulas({ de: hojeIso });
         const CHUNK_SIZE = 490;
         const deletePromises: Promise<void>[] = [];
         let deleteBatch = writeBatch(db);
@@ -1221,16 +1320,14 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
   const clearAulasHistory = async () => {
     if (await confirmar("Apagar o histórico com mais de 3 meses?", { texto: "As aulas mais recentes são mantidas. Não dá para desfazer.", perigo: true, confirmar: "Apagar histórico antigo" })) {
-        const aulasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
-        const currentDocs = await getDocs(aulasCollectionRef);
+        const threeMonthsAgo = new Date();
+        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
+        const thresholdIso = dataLocal(threeMonthsAgo);
+        const currentDocs = await lerAulas({ antesDe: thresholdIso });
         const CHUNK_SIZE = 490;
         const deletePromises: Promise<void>[] = [];
         let deleteBatch = writeBatch(db);
         let deleteCount = 0;
-
-        const threeMonthsAgo = new Date();
-        threeMonthsAgo.setMonth(threeMonthsAgo.getMonth() - 3);
-        const thresholdIso = dataLocal(threeMonthsAgo);
 
         currentDocs.forEach((d) => {
             const aulaData = d.data() as Aula;
@@ -1540,7 +1637,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     <DataContext.Provider value={{ 
       manutencoes, bloquearAmbienteManutencao, liberarAmbienteManutencao,
       aulas, anuncios, agendamentos, agendamentosPublicos, assinarAgendamentos, salasCadastradas, painelClienteConfig, observacoesLimpeza, alertas, loading, error, isOffline,
-      addAula, updateAulasFromCSV, updateAula, deleteAula, 
+      addAula, updateAulasFromCSV, updateAula, deleteAula, carregarHistoricoAulas, 
       clearAulas, clearAulasHistory, addAnuncio, deleteAnuncio, replaceAnuncio, reorderAnuncios, clearAllAnuncios,
       uploadMediaFile, uploadCSV, syncSource, updatePainelClienteConfig,
       solicitarAgendamento, aprovarAgendamento, rejeitarAgendamento, excluirAgendamento, sincronizarPlanilha,

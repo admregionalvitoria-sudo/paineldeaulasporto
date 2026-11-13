@@ -139,7 +139,8 @@ function App() {
   return (
     <ThemeProvider>
       <AuthProvider>
-        <DataProvider>
+        {/* Cada tela baixa só o período de aulas que usa: é o que mais pesa na cota do banco. */}
+        <DataProvider janela={view === 'dashboard' || view === 'painelcliente' ? 'painel' : view === 'limpeza' ? 'limpeza' : 'completa'}>
           <AppContent view={view} navigateTo={navigateTo} />
           <DialogosHost />
         </DataProvider>

@@ -13,7 +13,7 @@ vi.mock('firebase/firestore', () => ({
   doc: (...args: unknown[]) => ({ id: args.length === 1 ? 'nova' : args.at(-1), path: typeof args[0] === 'object' && 'path' in args[0]! ? `${(args[0] as { path: string }).path}/nova` : args.slice(1).join('/') }),
   getDocs: firestore.getDocs, getDoc: firestore.getDoc, addDoc: firestore.addDoc, setDoc: firestore.setDoc, updateDoc: firestore.updateDoc,
   writeBatch: () => ({ delete: firestore.excluir, set: firestore.inserir, update: firestore.atualizar, commit: firestore.commit }),
-  serverTimestamp: () => 'timestamp', onSnapshot: vi.fn(), query: vi.fn(), orderBy: vi.fn(), deleteDoc: firestore.deleteDoc,
+  serverTimestamp: () => 'timestamp', onSnapshot: vi.fn(), query: vi.fn(), orderBy: vi.fn(), where: vi.fn(), getCountFromServer: vi.fn(), deleteDoc: firestore.deleteDoc,
 }));
 import { DataContext, DataProvider, type ExtendedDataContextType } from '../context/DataContext';
 

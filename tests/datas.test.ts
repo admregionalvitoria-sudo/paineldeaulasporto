@@ -31,3 +31,21 @@ describe('datas locais', () => {
     expect(JSON.parse(resultado)).toEqual(['2026-11-12', '2026-11-11', '2026-11-03']);
   });
 });
+
+import { janelaDeAulas } from '../utils/datas';
+
+describe('período de aulas por tela', () => {
+  const hoje = new Date(2026, 10, 30, 23, 50); // 30/11, perto da meia-noite
+
+  it('TVs baixam só hoje e amanhã, virando o mês', () => {
+    expect(janelaDeAulas('painel', hoje)).toEqual({ de: '2026-11-30', ate: '2026-12-01' });
+  });
+
+  it('limpeza olha 8 dias para trás e até amanhã', () => {
+    expect(janelaDeAulas('limpeza', hoje)).toEqual({ de: '2026-11-22', ate: '2026-12-01' });
+  });
+
+  it('gestão e agendamento não têm limite no futuro', () => {
+    expect(janelaDeAulas('completa', hoje)).toEqual({ de: '2026-11-22' });
+  });
+});
