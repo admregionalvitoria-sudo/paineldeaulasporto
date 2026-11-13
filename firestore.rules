@@ -15,7 +15,8 @@ service cloud.firestore {
     }
 
     function canManage() {
-      return hasRole(['super_admin', 'admin', 'coordenador']);
+      // Agenda e prioridades de limpeza são do administrativo.
+      return hasRole(['super_admin', 'admin']);
     }
 
     // Leitura pública; escrita compatível com solicitações sem login, limitada ao subconjunto.

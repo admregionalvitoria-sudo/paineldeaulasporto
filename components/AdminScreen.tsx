@@ -1,4 +1,6 @@
-import AdminSidebar, { type AdminTab } from './AdminSidebar';
+import type { AdminTab } from './GestaoShell';
+import { Capacidade, pode } from '../utils/permissoes';
+import { avisar, confirmar } from './ui/Dialogos';
 import useCurrentTime from '../hooks/useCurrentTime';
 import { dataLocal, dataBR, dataISO } from '../utils/datas';
 import { usosDoDia } from '../utils/limpeza';
@@ -47,7 +49,8 @@ import {
 } from 'lucide-react';
 
 interface AdminScreenProps {
-  onReturnToDashboard: () => void;
+  aba: AdminTab;
+  onAba: (aba: AdminTab) => void;
   onNavigate?: (route: string) => void;
 }
 
@@ -594,8 +597,8 @@ const AmbientesManagementSection: React.FC = () => {
                   <button className="text-xs font-bold text-amber-800" onClick={() => { setSalaManutencao(sala); setMotivoManutencao(''); setFimManutencao(''); setFeedback(null); }}>Travar p/ manutenção</button>
                   {context?.excluirAmbiente && (
                     <button
-                      onClick={() => {
-                        if (confirm(`Remover o cadastro do ambiente "${sala}"?`)) {
+                      onClick={async () => {
+                        if (await confirmar(`Remover o cadastro de ${sala}?`, { texto: 'As aulas e reservas já feitas neste ambiente não são apagadas.', confirmar: 'Remover ambiente', perigo: true })) {
                           context.excluirAmbiente(sala);
                         }
                       }}
@@ -1180,14 +1183,34 @@ const LimpezaManagementSection: React.FC<{ onNavigate?: (route: string) => void 
   );
 };
 
-const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNavigate }) => {
-  useAgendamentos('completo');
-  const context = useContext(DataContext) as ExtendedDataContextType;
-  const { usuarioAtual, logout, temPermissao } = useAuth();
+const CAPACIDADE_DA_ABA: Record<AdminTab, Capacidade> = {
+  aulas: 'cronograma', historico: 'historico', ambientes: 'ambientes', agendamentos: 'solicitacoes',
+  alertas: 'alertas', agenda: 'agenda', limpeza: 'limpeza',
+};
 
-  const [adminTab, setAdminTab] = useState<AdminTab>('aulas');
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+const CABECALHO_DA_ABA: Record<AdminTab, { titulo: string; descricao: string }> = {
+  aulas: { titulo: 'Cronograma de aulas', descricao: 'Aulas de hoje em diante. É o que aparece no painel das TVs.' },
+  historico: { titulo: 'Histórico de aulas', descricao: 'Aulas de dias que já passaram.' },
+  ambientes: { titulo: 'Ambientes e manutenção', descricao: 'Salas cadastradas e bloqueios para manutenção.' },
+  agendamentos: { titulo: 'Solicitações de salas', descricao: 'Pedidos de reserva feitos pelo formulário de agendamento.' },
+  alertas: { titulo: 'Alertas', descricao: 'Avisos enviados pelo administrativo ao pedagógico.' },
+  agenda: { titulo: 'Agenda do Porto', descricao: 'Compromissos da unidade publicados pelo administrativo.' },
+  limpeza: { titulo: 'Limpeza e observações', descricao: 'Avisos da gestão para a equipe de limpeza, por ambiente.' },
+};
+
+const ROTULO_TURNO: Record<string, { rotulo: string; cor: string }> = {
+  Matutino: { rotulo: 'Manhã', cor: 'bg-sky-50 text-sky-800' },
+  Vespertino: { rotulo: 'Tarde', cor: 'bg-amber-50 text-amber-800' },
+  Noturno: { rotulo: 'Noite', cor: 'bg-indigo-50 text-indigo-800' },
+};
+
+const AdminScreen: React.FC<AdminScreenProps> = ({ aba, onAba, onNavigate }) => {
+  const context = useContext(DataContext) as ExtendedDataContextType;
+  const { usuarioAtual } = useAuth();
+
+  // Uma aba fora do perfil cai no cronograma, que todos os perfis desta tela têm.
+  const adminTab: AdminTab = pode(usuarioAtual, CAPACIDADE_DA_ABA[aba]) ? aba : 'aulas';
+  const podeExcluirEmMassa = pode(usuarioAtual, 'exclusaoEmMassa');
   const { formattedDate } = useCurrentTime();
   const [editingAula, setEditingAula] = useState<Aula | null>(null);
   const [addingAula, setAddingAula] = useState(false);
@@ -1197,8 +1220,10 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
   const [searchTurma, setSearchTurma] = useState('');
   const [searchInstrutor, setSearchInstrutor] = useState('');
   const [filterShift, setFilterShift] = useState<string | null>(null);
+  const [limiteLinhas, setLimiteLinhas] = useState(100);
 
-  const pendentesCount = (context.agendamentos || []).filter(a => a.status === 'pendente').length;
+  const alertasAtivos = (context.alertas || []).filter(a => a.ativo).length;
+  const temFiltro = !!(searchDate || searchTurma || searchInstrutor || filterShift);
 
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -1208,227 +1233,90 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
     }
   };
 
-  const getTodayFormatted = () => dataBR(dataLocal());
+  const hojeBR = dataBR(dataLocal());
 
-  const { currentAulas, historicoAulas, filteredAulasAdmin } = useMemo(() => {
+  const aulasFiltradas = useMemo(() => {
     const todayIso = dataLocal();
-
-    const current = context.aulas.filter(aula => dataISO(aula.data) >= todayIso);
-    const past = context.aulas.filter(aula => dataISO(aula.data) < todayIso);
-
-    const filtered = context.aulas.filter(aula => {
-      const matchesDate = !searchDate || aula.data.includes(searchDate);
-      const matchesTurma = !searchTurma || aula.turma.toLowerCase().includes(searchTurma.toLowerCase());
-      const matchesInstrutor = !searchInstrutor || aula.instrutor.toLowerCase().includes(searchInstrutor.toLowerCase());
-      const matchesShift = !filterShift || (aula.turno && aula.turno.toLowerCase() === filterShift.toLowerCase());
-      
-      const isPast = dataISO(aula.data) < todayIso;
-
-      if (adminTab === 'historico') {
-        return matchesDate && matchesTurma && matchesInstrutor && matchesShift && isPast;
-      } else {
-        return matchesDate && matchesTurma && matchesInstrutor && matchesShift && !isPast;
-      }
+    const turma = searchTurma.trim().toLowerCase();
+    const instrutor = searchInstrutor.trim().toLowerCase();
+    const lista = context.aulas.filter(aula => {
+      const passada = dataISO(aula.data) < todayIso;
+      if (adminTab === 'historico' ? !passada : passada) return false;
+      if (searchDate && !aula.data.includes(searchDate)) return false;
+      if (turma && !(aula.turma || '').toLowerCase().includes(turma)) return false;
+      if (instrutor && !(aula.instrutor || '').toLowerCase().includes(instrutor)) return false;
+      if (filterShift && (aula.turno || '').toLowerCase() !== filterShift.toLowerCase()) return false;
+      return true;
     });
-
-    return { currentAulas: current, historicoAulas: past, filteredAulasAdmin: filtered };
+    // Cronograma: a aula mais próxima primeiro. Histórico: a mais recente primeiro.
+    const direcao = adminTab === 'historico' ? -1 : 1;
+    return lista.sort((a, b) => direcao * (dataISO(a.data).localeCompare(dataISO(b.data)) || (a.inicio || '').localeCompare(b.inicio || '')));
   }, [context.aulas, searchDate, searchTurma, searchInstrutor, filterShift, adminTab, formattedDate]);
 
+  React.useEffect(() => { setLimiteLinhas(100); }, [adminTab, searchDate, searchTurma, searchInstrutor, filterShift]);
+
+  const excluirAula = async (aula: Aula) => {
+    const ok = await confirmar(`Excluir a aula da turma ${aula.turma}?`, {
+      texto: `${formatarNomeSala(aula.sala)} · ${aula.data} · ${aula.inicio}${aula.fim ? `–${aula.fim}` : ''}. Ela sai do painel das TVs.`,
+      confirmar: 'Excluir aula', perigo: true,
+    });
+    if (ok) context.deleteAula(aula.id);
+  };
+
+  const cabecalho = CABECALHO_DA_ABA[adminTab];
+  const botao = 'inline-flex min-h-11 items-center gap-2 rounded-xl px-4 text-sm font-bold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-500 disabled:opacity-50';
+  const campo = 'mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm text-[#0F2A52] outline-none focus:border-[#1D4E8C] focus:bg-white';
+
   return (
-    <div className="min-h-screen bg-[#EDF1F6] text-[#0F2A52] font-sans relative lg:flex">
-      <AdminSidebar activeTab={adminTab} onTab={tab => { setAdminTab(tab); setMobileMenuOpen(false); }}
-        onNavigate={route => onNavigate ? onNavigate(route) : window.location.assign(`/${route}`)}
-        onReturn={onReturnToDashboard} collapsed={sidebarCollapsed} onCollapse={() => setSidebarCollapsed(!sidebarCollapsed)}
-        mobileOpen={mobileMenuOpen} onMobileToggle={() => setMobileMenuOpen(!mobileMenuOpen)}
-        counts={{ aulas: currentAulas.length, historico: historicoAulas.length, ambientes: context.salasCadastradas.length, agendamentos: pendentesCount, limpeza: Object.values(context.observacoesLimpeza || {}).filter(o => o.observacao).length, alertas: context.alertas.filter(a => a.ativo).length }} />
-      <div className={`flex-1 flex flex-col p-4 sm:p-8 min-w-0 ${sidebarCollapsed ? 'lg:ml-24' : 'lg:ml-64'}`}>
+    <div className="mx-auto w-full max-w-[1600px] p-4 sm:p-8">
       <AnimatePresence>
         {editingAula && (
-          <EditModal 
-            aula={editingAula} 
-            onClose={() => setEditingAula(null)} 
-            onSave={d => { 
-              context.updateAula(editingAula.id, d); 
-              setEditingAula(null); 
-            }} 
+          <EditModal
+            aula={editingAula}
+            onClose={() => setEditingAula(null)}
+            onSave={d => { context.updateAula(editingAula.id, d); setEditingAula(null); }}
           />
         )}
         {addingAula && (
-          <AddModal 
+          <AddModal
             salasExistentes={context.salasCadastradas}
-            onClose={() => setAddingAula(false)} 
-            onSave={d => { 
-              context.addAula(d); 
-              setAddingAula(false); 
-            }} 
+            onClose={() => setAddingAula(false)}
+            onSave={d => { context.addAula(d); setAddingAula(false); }}
           />
         )}
       </AnimatePresence>
-      
-      {/* Top Header */}
-      <header className="mb-6 max-w-[2000px] w-full mx-auto relative px-2">
 
-        {/* Notificação Piscante de Alertas */}
-        {context.alertas?.some(a => a.ativo) && (
-          <div className="mb-4 rounded-xl w-full bg-red-600 text-white text-xs font-bold uppercase tracking-widest py-3 px-4 flex items-center justify-center gap-2 animate-pulse shadow-md z-10 cursor-pointer" onClick={() => setAdminTab('alertas')}>
-            <BellRing className="w-5 h-5 animate-bounce" />
-            Você tem alertas importantes não lidos! Clique aqui.
+      {alertasAtivos > 0 && adminTab !== 'alertas' && (
+        <button type="button" onClick={() => onAba('alertas')}
+          className="mb-5 flex w-full items-center gap-3 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-left text-sm font-semibold text-red-800 hover:bg-red-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-red-500">
+          <BellRing className="h-5 w-5 shrink-0 text-red-600" />
+          <span className="flex-1">{alertasAtivos === 1 ? 'Há 1 alerta não lido.' : `Há ${alertasAtivos} alertas não lidos.`}</span>
+          <span className="shrink-0 underline underline-offset-2">Ver alertas</span>
+        </button>
+      )}
+
+      <header className="mb-6 flex flex-wrap items-end justify-between gap-4">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-black tracking-tight sm:text-3xl">{cabecalho.titulo}</h1>
+          <p className="mt-1 text-sm text-slate-500">{cabecalho.descricao}</p>
+        </div>
+
+        {adminTab === 'aulas' && (
+          <div className="flex flex-wrap items-center gap-2">
+            <input type="file" accept=".csv,.xlsx,.xls" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
+            <button type="button" onClick={() => fileInputRef.current?.click()} disabled={context.loading}
+              className={`${botao} border border-slate-300 bg-white text-[#0F2A52] hover:bg-slate-50`}>
+              <UploadCloud className="h-4 w-4" />
+              {context.loading ? 'Processando…' : 'Importar planilha'}
+            </button>
+            <button type="button" onClick={() => setAddingAula(true)} className={`${botao} bg-[#F4901E] text-white hover:bg-[#E07F12]`}>
+              <Plus className="h-4 w-4" /> Nova aula
+            </button>
           </div>
         )}
-
-        <div className={`flex flex-col lg:flex-row justify-between items-start lg:items-center gap-4 ${context.alertas?.some(a => a.ativo) ? "mt-2" : ""}`}>
-          <div>
-            <div className="flex items-center gap-3 mb-1.5">
-              <span className="text-[11px] font-black uppercase tracking-[0.3em] text-[#F4901E]">SENAI • PAINEL ADMINISTRATIVO</span>
-              <span className="px-2.5 py-1 rounded-full text-[10px] font-black tracking-wider bg-[#0F2A52]/10 text-[#0F2A52]">
-                {usuarioAtual?.email || 'admin@senai.br'}
-              </span>
-            </div>
-            <h1 className="text-3xl sm:text-4xl font-black uppercase tracking-tighter text-[#0F2A52]">
-              Gestão de Horários & Ambientes
-            </h1>
-          </div>
-        </div>
       </header>
 
-      {/* Main Content Area */}
-      <div className="max-w-[2000px] w-full mx-auto flex flex-col lg:flex-row gap-6 items-start">
-        <main className="flex-1 min-w-0 bg-white p-6 sm:p-8 rounded-3xl border border-[#E5E7EB] shadow-lg">
-          {/* Categorias / Navegação de Abas - Voltaram para o Topo */}
-          <div className="flex flex-wrap items-center justify-between gap-4 mb-8 border-b border-[#E5E7EB] pb-4">
-            <div className="flex flex-wrap bg-[#F1F5F9] p-1.5 rounded-2xl gap-2">
-              <button
-                onClick={() => setAdminTab('aulas')}
-                className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
-                  adminTab === 'aulas'
-                    ? 'bg-white text-[#0F2A52] shadow-sm'
-                    : 'text-[#64748B] hover:text-[#0F2A52]'
-                }`}
-              >
-                <Clock className="w-4 h-4 text-[#1D4E8C]" />
-                <span>Cronograma ({currentAulas.length})</span>
-              </button>
-
-              {temPermissao(['admin']) && (
-                <button
-                  onClick={() => setAdminTab('historico')}
-                  className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
-                    adminTab === 'historico'
-                      ? 'bg-white text-[#0F2A52] shadow-sm'
-                      : 'text-[#64748B] hover:text-[#0F2A52]'
-                  }`}
-                >
-                  <ClipboardList className="w-4 h-4 text-[#1D4E8C]" />
-                  <span>Histórico ({historicoAulas.length})</span>
-                </button>
-              )}
-
-              <button
-                onClick={() => setAdminTab('ambientes')}
-                className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 ${
-                  adminTab === 'ambientes'
-                    ? 'bg-white text-[#0F2A52] shadow-sm'
-                    : 'text-[#64748B] hover:text-[#0F2A52]'
-                }`}
-              >
-                <DoorOpen className="w-4 h-4 text-[#F4901E]" />
-                <span>Gestão de Ambientes ({context.salasCadastradas.length})</span>
-              </button>
-
-              <button
-                onClick={() => setAdminTab('agendamentos')}
-                className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 relative ${
-                  adminTab === 'agendamentos'
-                    ? 'bg-white text-[#0F2A52] shadow-sm'
-                    : 'text-[#64748B] hover:text-[#0F2A52]'
-                }`}
-              >
-                <Building className="w-4 h-4 text-[#F4901E]" />
-                <span>Solicitações de Salas</span>
-                {pendentesCount > 0 && (
-                  <span className="bg-amber-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-xs">
-                    {pendentesCount}
-                  </span>
-                )}
-              </button>
-
-              <button
-                onClick={() => setAdminTab('limpeza')}
-                className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 relative ${
-                  adminTab === 'limpeza'
-                    ? 'bg-white text-[#0F2A52] shadow-sm'
-                    : 'text-[#64748B] hover:text-[#0F2A52]'
-                }`}
-              >
-                <Broom className="w-4 h-4 text-[#1D4E8C]" />
-                <span>Limpeza & Observações</span>
-                {Object.keys(context.observacoesLimpeza || {}).filter(k => !!context.observacoesLimpeza?.[k]?.observacao).length > 0 && (
-                  <span className="bg-[#F4901E] text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-xs">
-                    {Object.keys(context.observacoesLimpeza || {}).filter(k => !!context.observacoesLimpeza?.[k]?.observacao).length}
-                  </span>
-                )}
-              </button>
-
-              <button
-                onClick={() => setAdminTab('alertas')}
-                className={`px-5 py-2.5 rounded-xl text-xs font-black uppercase tracking-wider transition-all flex items-center gap-2 relative ${
-                  adminTab === 'alertas'
-                    ? 'bg-red-600 text-white shadow-sm'
-                    : 'text-[#64748B] hover:text-red-600'
-                }`}
-              >
-                {context.alertas?.some(a => a.ativo) ? <BellRing className="w-4 h-4 animate-bounce text-red-500" /> : <Bell className="w-4 h-4" />}
-                <span>Alertas</span>
-                {context.alertas?.filter(a => a.ativo).length > 0 && (
-                  <span className="bg-red-500 text-white text-[10px] font-black px-2 py-0.5 rounded-full shadow-xs">
-                    {context.alertas.filter(a => a.ativo).length}
-                  </span>
-                )}
-              </button>
-            </div>
-
-          {adminTab === 'aulas' && (
-            <div className="flex flex-wrap items-center gap-3">
-              <input type="file" accept=".csv,.xlsx,.xls" className="hidden" ref={fileInputRef} onChange={handleFileUpload} />
-              
-              <button 
-                onClick={() => fileInputRef.current?.click()} 
-                disabled={context.loading}
-                className="bg-[#0F2A52] text-white px-4 py-2.5 rounded-xl font-black uppercase text-[10px] flex items-center gap-1.5 hover:bg-[#1D4E8C] transition-all shadow-md disabled:opacity-50"
-              >
-                <UploadCloud className="w-4 h-4" /> 
-                {context.loading ? 'Processando...' : 'Importar CSV'}
-              </button>
-              
-              <button 
-                onClick={() => setAddingAula(true)}
-                className="bg-[#F4901E] text-white px-4 py-2.5 rounded-xl font-black uppercase text-[10px] flex items-center gap-1.5 hover:bg-[#E67E22] transition-all shadow-md"
-              >
-                <Plus className="w-4 h-4" /> Nova Aula
-              </button>
-
-              <button 
-                onClick={() => context.clearAulas()} 
-                className="bg-red-50 text-red-600 border border-red-200 px-4 py-2.5 rounded-xl font-black uppercase text-[10px] flex items-center gap-1.5 hover:bg-red-600 hover:text-white transition-all"
-              >
-                <Trash2 className="w-4 h-4" /> Limpar Tudo
-              </button>
-            </div>
-          )}
-
-          {adminTab === 'historico' && (
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                onClick={() => context.clearAulasHistory()}
-                className="bg-red-50 text-red-600 border border-red-200 px-4 py-2.5 rounded-xl font-black uppercase text-[10px] flex items-center gap-1.5 hover:bg-red-600 hover:text-white transition-all"
-              >
-                <Trash2 className="w-4 h-4" /> Limpar Histórico (+3 meses)
-              </button>
-            </div>
-          )}
-        </div>
-
-        {/* Conteúdo Conforme a Aba */}
+      <main className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
         {adminTab === 'ambientes' ? (
           <AmbientesManagementSection />
         ) : adminTab === 'agendamentos' ? (
@@ -1437,187 +1325,141 @@ const AdminScreen: React.FC<AdminScreenProps> = ({ onReturnToDashboard, onNaviga
           <LimpezaManagementSection onNavigate={onNavigate} />
         ) : adminTab === 'alertas' ? (
           <AlertasManagementSection hideForm={true} />
+        ) : adminTab === 'agenda' ? (
+          <div className="mx-auto max-w-3xl"><AgendaPorto inline={true} /></div>
         ) : (
-          /* Aba de Aulas & Cronograma */
           <div>
-            {/* Filtros de Pesquisa */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
-              <div>
-                <label className="text-[10px] font-black uppercase text-[#6B7280] block mb-1">Data</label>
-                <input 
-                  type="text"
-                  placeholder="DD/MM/YYYY"
-                  value={searchDate}
-                  onChange={(e) => setSearchDate(e.target.value)}
-                  className="w-full bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-black uppercase text-[#6B7280] block mb-1">Turma</label>
-                <input 
-                  type="text"
-                  placeholder="Buscar por turma..."
-                  value={searchTurma}
-                  onChange={(e) => setSearchTurma(e.target.value)}
-                  className="w-full bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
-                />
-              </div>
-              <div>
-                <label className="text-[10px] font-black uppercase text-[#6B7280] block mb-1">Instrutor</label>
-                <input 
-                  type="text"
-                  placeholder="Buscar por instrutor..."
-                  value={searchInstrutor}
-                  onChange={(e) => setSearchInstrutor(e.target.value)}
-                  className="w-full bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52]"
-                />
-              </div>
+            <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+              <label className="text-xs font-bold text-slate-600">Data
+                <input type="text" inputMode="numeric" placeholder="dd/mm/aaaa" value={searchDate} onChange={e => setSearchDate(e.target.value)} className={campo} />
+              </label>
+              <label className="text-xs font-bold text-slate-600">Turma
+                <input type="search" placeholder="Buscar por turma" value={searchTurma} onChange={e => setSearchTurma(e.target.value)} className={campo} />
+              </label>
+              <label className="text-xs font-bold text-slate-600">Instrutor
+                <input type="search" placeholder="Buscar por instrutor" value={searchInstrutor} onChange={e => setSearchInstrutor(e.target.value)} className={campo} />
+              </label>
             </div>
 
-            {/* Filtros de Turno e Acesso Rápido */}
-            <div className="flex flex-wrap gap-2 mb-6">
-              <button
-                onClick={() => setSearchDate(getTodayFormatted())}
-                className={`flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold uppercase text-[10px] transition-all ${
-                  searchDate === getTodayFormatted()
-                    ? 'bg-[#0F2A52] text-white shadow-md' 
-                    : 'bg-[#F8FAFC] text-[#6B7280] border border-[#E5E7EB] hover:bg-[#DBEAFE]'
-                }`}
-              >
-                <Calendar className="w-3.5 h-3.5" />
-                Hoje
-              </button>
-
+            <div className="mb-5 flex flex-wrap items-center gap-2">
+              {adminTab === 'aulas' && (
+                <button type="button" aria-pressed={searchDate === hojeBR} onClick={() => setSearchDate(searchDate === hojeBR ? '' : hojeBR)}
+                  className={`inline-flex min-h-10 items-center gap-1.5 rounded-full px-4 text-sm font-semibold transition-colors ${searchDate === hojeBR ? 'bg-[#0F2A52] text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
+                  <Calendar className="h-4 w-4" /> Hoje
+                </button>
+              )}
               {[
                 { id: 'Matutino', label: 'Manhã', icon: Sun },
                 { id: 'Vespertino', label: 'Tarde', icon: Sunset },
-                { id: 'Noturno', label: 'Noite', icon: Moon }
-              ].map((t) => {
+                { id: 'Noturno', label: 'Noite', icon: Moon },
+              ].map(t => {
                 const Icon = t.icon;
-                const isActive = filterShift === t.id;
+                const ativo = filterShift === t.id;
                 return (
-                  <button
-                    key={t.id}
-                    onClick={() => setFilterShift(isActive ? null : t.id)}
-                    className={`flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold uppercase text-[10px] transition-all ${
-                      isActive 
-                        ? 'bg-[#F4901E] text-white shadow-md' 
-                        : 'bg-[#F8FAFC] text-[#6B7280] border border-[#E5E7EB] hover:bg-[#DBEAFE]'
-                    }`}
-                  >
-                    <Icon className="w-3.5 h-3.5" />
-                    {t.label}
+                  <button key={t.id} type="button" aria-pressed={ativo} onClick={() => setFilterShift(ativo ? null : t.id)}
+                    className={`inline-flex min-h-10 items-center gap-1.5 rounded-full px-4 text-sm font-semibold transition-colors ${ativo ? 'bg-[#0F2A52] text-white' : 'border border-slate-200 bg-white text-slate-600 hover:bg-slate-50'}`}>
+                    <Icon className="h-4 w-4" /> {t.label}
                   </button>
                 );
               })}
-
-              {(searchDate || searchTurma || searchInstrutor || filterShift) && (
-                <button
-                  onClick={() => {
-                    setSearchDate('');
-                    setSearchTurma('');
-                    setSearchInstrutor('');
-                    setFilterShift(null);
-                  }}
-                  className="text-xs font-bold text-red-500 hover:underline ml-2"
-                >
-                  Limpar Filtros
+              {temFiltro && (
+                <button type="button" onClick={() => { setSearchDate(''); setSearchTurma(''); setSearchInstrutor(''); setFilterShift(null); }}
+                  className="min-h-10 px-2 text-sm font-semibold text-[#1D4E8C] underline-offset-2 hover:underline">
+                  Limpar filtros
                 </button>
               )}
+              <p className="ml-auto text-sm tabular-nums text-slate-500" role="status">
+                {aulasFiltradas.length === 1 ? '1 aula' : `${aulasFiltradas.length} aulas`}
+              </p>
             </div>
 
-            {/* Listagem de Aulas */}
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b border-[#E5E7EB] text-[10px] font-black uppercase text-[#6B7280] tracking-wider">
-                    <th className="py-3 px-4">Ambiente / Sala</th>
-                    <th className="py-3 px-4">Turma</th>
-                    <th className="py-3 px-4">Instrutor</th>
-                    <th className="py-3 px-4">Unidade Curricular</th>
-                    <th className="py-3 px-4">Data</th>
-                    <th className="py-3 px-4">Horário</th>
-                    <th className="py-3 px-4 text-right">Ações</th>
+            <div className="overflow-x-auto rounded-xl border border-slate-200">
+              <table className="w-full min-w-[820px] border-collapse text-left text-sm">
+                <thead className="bg-slate-50 text-xs font-bold uppercase tracking-wide text-slate-500">
+                  <tr>
+                    <th scope="col" className="px-4 py-3">Data</th>
+                    <th scope="col" className="px-4 py-3">Horário</th>
+                    <th scope="col" className="px-4 py-3">Ambiente</th>
+                    <th scope="col" className="px-4 py-3">Turma</th>
+                    <th scope="col" className="px-4 py-3">Instrutor</th>
+                    <th scope="col" className="px-4 py-3">Unidade curricular</th>
+                    <th scope="col" className="px-4 py-3 text-right"><span className="sr-only">Ações</span></th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-[#F1F5F9] text-xs">
-                  {filteredAulasAdmin.map(aula => (
-                    <tr key={aula.id} className="hover:bg-[#F8FAFC] transition-colors">
-                      <td className="py-3 px-4 font-bold text-[#0F2A52]">
-                        <span className="px-2 py-1 bg-amber-50 text-amber-900 border border-amber-200 rounded-lg text-xs">
-                          {formatarNomeSala(aula.sala)}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 font-semibold text-[#0F2A52] max-w-[200px] truncate">
-                        {aula.turma}
-                      </td>
-                      <td className="py-3 px-4 text-[#475569]">
-                        {aula.instrutor}
-                        {aula.modificadoManualmente && (
-                          <span title="Modificado manualmente pelo painel" className="ml-1.5 inline-flex items-center text-[#F4901E] bg-amber-50 p-1 rounded">
-                            <Edit3 className="w-3 h-3" />
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-3 px-4 text-[#64748B] max-w-[220px] truncate" title={aula.unidade_curricular ? formatarUnidadeCurricular(aula.unidade_curricular) : '—'}>
-                        {aula.unidade_curricular ? formatarUnidadeCurricular(aula.unidade_curricular) : '—'}
-                      </td>
-                      <td className="py-3 px-4 text-[#0F2A52] font-mono text-[11px]">{aula.data}</td>
-                      <td className="py-3 px-4 font-bold text-[#0F2A52]">
-                        <div>{aula.inicio} {aula.fim ? `- ${aula.fim}` : ''}</div>
-                        <span className={`inline-block mt-1 px-2 py-0.5 rounded-full text-[9px] font-black uppercase tracking-wider ${
-                          aula.turno === 'Vespertino' ? 'bg-amber-100 text-amber-800 border border-amber-300' :
-                          aula.turno === 'Noturno' ? 'bg-indigo-100 text-indigo-800 border border-indigo-300' :
-                          'bg-sky-100 text-sky-800 border border-sky-300'
-                        }`}>
-                          {aula.turno === 'Vespertino' ? 'Tarde' : aula.turno === 'Noturno' ? 'Noite' : 'Manhã'}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          <button
-                            onClick={() => setEditingAula(aula)}
-                            className="p-1.5 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
-                            title="Editar Aula"
-                          >
-                            <Edit3 className="w-4 h-4" />
+                <tbody className="divide-y divide-slate-100">
+                  {aulasFiltradas.slice(0, limiteLinhas).map(aula => {
+                    const [salaPrincipal, ...salaDetalhe] = formatarNomeSala(aula.sala).split(' — ');
+                    const turno = ROTULO_TURNO[aula.turno] || ROTULO_TURNO.Matutino;
+                    const uc = aula.unidade_curricular ? formatarUnidadeCurricular(aula.unidade_curricular) : '—';
+                    return (
+                      <tr key={aula.id} className="align-top hover:bg-slate-50">
+                        <td className="whitespace-nowrap px-4 py-3 font-semibold tabular-nums">{aula.data}</td>
+                        <td className="whitespace-nowrap px-4 py-3">
+                          <span className="font-semibold tabular-nums">{aula.inicio}{aula.fim ? `–${aula.fim}` : ''}</span>
+                          <span className={`ml-2 rounded-full px-2 py-0.5 text-xs font-semibold ${turno.cor}`}>{turno.rotulo}</span>
+                        </td>
+                        <td className="px-4 py-3">
+                          <p className="font-semibold">{salaPrincipal}</p>
+                          {salaDetalhe.length > 0 && <p className="text-xs text-slate-500">{salaDetalhe.join(' · ')}</p>}
+                        </td>
+                        <td className="px-4 py-3 font-semibold">{aula.turma}</td>
+                        <td className="px-4 py-3 text-slate-600">
+                          {aula.instrutor}
+                          {aula.modificadoManualmente && (
+                            <span className="ml-2 inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-semibold text-amber-800" title="Esta aula foi criada ou alterada pela gestão e não é sobrescrita ao importar a planilha.">
+                              <Edit3 className="h-3 w-3" /> Ajustada
+                            </span>
+                          )}
+                        </td>
+                        <td className="max-w-[260px] px-4 py-3 text-slate-600" title={uc}><span className="line-clamp-2">{uc}</span></td>
+                        <td className="whitespace-nowrap px-2 py-2 text-right">
+                          <button type="button" onClick={() => setEditingAula(aula)} aria-label={`Editar aula da turma ${aula.turma}`} title="Editar"
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-[#1D4E8C] hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-blue-500">
+                            <Edit3 className="h-4 w-4" />
                           </button>
-                          <button
-                            onClick={() => {
-                              if (confirm(`Excluir a aula da turma "${aula.turma}" no ambiente "${aula.sala}"?`)) {
-                                context.deleteAula(aula.id);
-                              }
-                            }}
-                            className="p-1.5 text-red-500 hover:bg-red-50 rounded-lg transition-colors"
-                            title="Excluir Aula"
-                          >
-                            <Trash2 className="w-4 h-4" />
+                          <button type="button" onClick={() => excluirAula(aula)} aria-label={`Excluir aula da turma ${aula.turma}`} title="Excluir"
+                            className="inline-flex h-10 w-10 items-center justify-center rounded-lg text-red-600 hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-red-500">
+                            <Trash2 className="h-4 w-4" />
                           </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
 
-              {filteredAulasAdmin.length === 0 && (
-                <div className="py-12 text-center text-xs font-bold text-[#6B7280]">
-                  Nenhuma aula encontrada para os filtros selecionados.
+              {aulasFiltradas.length === 0 && (
+                <div className="px-4 py-14 text-center">
+                  <p className="font-bold">{temFiltro ? 'Nenhuma aula com esses filtros' : adminTab === 'historico' ? 'Ainda não há aulas no histórico' : 'Nenhuma aula no cronograma'}</p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {temFiltro ? 'Ajuste ou limpe os filtros para ver mais aulas.' : adminTab === 'historico' ? 'As aulas passam para cá no dia seguinte.' : 'Importe a planilha de horários ou cadastre uma aula.'}
+                  </p>
                 </div>
               )}
             </div>
+
+            {aulasFiltradas.length > limiteLinhas && (
+              <div className="mt-4 text-center">
+                <button type="button" onClick={() => setLimiteLinhas(limiteLinhas + 100)} className={`${botao} border border-slate-300 bg-white hover:bg-slate-50`}>
+                  Mostrar mais 100 ({aulasFiltradas.length - limiteLinhas} restantes)
+                </button>
+              </div>
+            )}
+
+            {podeExcluirEmMassa && (
+              <div className="mt-8 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-red-100 bg-red-50/50 px-4 py-3">
+                <p className="text-sm text-slate-600">
+                  {adminTab === 'historico' ? 'Apaga as aulas com mais de 3 meses. Não dá para desfazer.' : 'Apaga todas as aulas do cronograma. Não dá para desfazer.'}
+                </p>
+                <button type="button" onClick={() => (adminTab === 'historico' ? context.clearAulasHistory() : context.clearAulas())}
+                  className={`${botao} border border-red-200 bg-white text-red-700 hover:bg-red-600 hover:text-white`}>
+                  <Trash2 className="h-4 w-4" /> {adminTab === 'historico' ? 'Limpar histórico antigo' : 'Limpar cronograma'}
+                </button>
+              </div>
+            )}
           </div>
         )}
       </main>
-
-      {/* Right Sidebar - Agenda */}
-      <aside className="w-full lg:w-[360px] shrink-0">
-        <div className="sticky top-6">
-          <AgendaPorto inline={true} />
-        </div>
-      </aside>
-      </div>
-    </div>
     </div>
   );
 };

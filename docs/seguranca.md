@@ -11,6 +11,20 @@
 | `api/upload` aceitava envio e exclusão de arquivos sem login. | Exige usuário com papel `super_admin`, `admin`, `comunicacao` ou `midia`. |
 | `api/agendamento-planilha` lia o Firestore antes de enviar (falhava com a cota esgotada) e aceitava qualquer chamada. | Recebe os dados direto do sistema, valida campo a campo e exige login de gestão para "Aprovado"/"Negado". |
 
+## Perfis de acesso
+
+A matriz fica em `utils/permissoes.ts` e vale para o menu, as rotas e os botões.
+
+| Perfil | Pode |
+|---|---|
+| Administrador / Super administrador | Tudo. |
+| Coordenador pedagógico | Cronograma (inclusive importar planilha), histórico, ambientes e manutenção, aprovar e recusar reservas, ler alertas e a Agenda do Porto. |
+| Comunicação | Só mídias das TVs e do painel do cliente. |
+
+Coordenador não vê mídias, usuários, auditoria, limpeza nem prioridades/agenda do administrativo, e não
+tem os botões de apagar cronograma ou histórico. As APIs conferem o perfil no servidor: upload de mídia
+aceita só Comunicação e Administrador; usuários, só Administrador.
+
 ## O que ainda falta: regras do Firestore
 
 As regras em produção permitem **ler e gravar em quase todas as coleções sem login**, inclusive
@@ -60,13 +74,17 @@ service cloud.firestore {
                                  'alertas', 'meta', 'agendamentosPublicos', 'prioridadesLimpeza',
                                  'limpezaConcluida'];
 
-      // Grade, ambientes, manutenção, alertas e prioridades: só a gestão altera.
-      allow write: if colecao in ['aulas', 'ambientes', 'manutencoes', 'alertas', 'meta',
-                                  'prioridadesLimpeza', 'agendaPorto'] && gestao();
+      // Grade, ambientes e manutenção: pedagógico (coordenador) e administrador.
+      allow write: if colecao in ['aulas', 'ambientes', 'manutencoes', 'meta'] && gestao();
+      // Alertas, prioridades de limpeza e agenda: só o administrador publica.
+      // (Quem lê um alerta marca como lido: liberar update para a gestão.)
+      allow create, delete: if colecao in ['alertas', 'prioridadesLimpeza', 'agendaPorto'] && admin();
+      allow update: if colecao == 'alertas' && gestao();
+      allow update: if colecao in ['prioridadesLimpeza', 'agendaPorto'] && admin();
       allow read: if colecao == 'agendaPorto' && logado();
 
-      // Anúncios: gestão e comunicação.
-      allow write: if colecao == 'anuncios' && (gestao() || midia());
+      // Anúncios: só comunicação e administrador.
+      allow write: if colecao == 'anuncios' && midia();
 
       // Observações e conclusão de limpeza: a tela /limpeza é pública.
       allow write: if colecao in ['limpeza', 'limpezaConcluida'];

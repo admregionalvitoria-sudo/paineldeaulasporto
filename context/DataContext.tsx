@@ -1,3 +1,4 @@
+import { avisar, confirmar } from '../components/ui/Dialogos';
 import { montarAgendamentoPublico, planejarBackfillAgendamentos } from '../utils/agendamentosPublicos';
 import { criarAssinaturas } from '../utils/assinaturas';
 import { selecionarReenvios } from '../utils/reenviosPlanilha';
@@ -1009,7 +1010,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       );
 
       setSyncSource(nomeArquivo);
-      alert(`${futureAulasFromCsv.length} aulas sincronizadas! ${plano.preservadas} aulas com ajustes manuais preservadas. ${plano.historicas} aulas históricas preservadas.`);
+      avisar(`${futureAulasFromCsv.length} aulas sincronizadas! ${plano.preservadas} aulas com ajustes manuais preservadas. ${plano.historicas} aulas históricas preservadas.`, 'sucesso');
   };
 
   const uploadCSV = async (file: File) => {
@@ -1036,7 +1037,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       await persistirAulasImportadas(processed, file.name);
     } catch (e: any) {
       setError(e.message);
-      alert("Erro ao processar arquivo: " + e.message);
+      avisar("Erro ao processar arquivo: " + e.message, 'erro');
     } finally {
       setLoading(false);
     }
@@ -1054,7 +1055,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const conflito = verificarConflitoAmbiente(novaSala, novaData, novoTurno, id);
       if (conflito) {
         const msg = `Conflito no ambiente: O ambiente "${novaSala}" já possui a turma "${conflito.turma}" alocada na data ${novaData} (${novoTurno}). Não é permitido o mesmo ambiente com duas turmas no mesmo horário.`;
-        alert(msg);
+        avisar(msg, 'info');
         throw new Error(msg);
       }
 
@@ -1113,7 +1114,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
       const conflito = verificarConflitoAmbiente(formattedSala, aulaData.data, turnoCalculado);
       if (conflito) {
         const msg = `Conflito de ambiente: O ambiente "${formattedSala}" já está alocado para a turma "${conflito.turma}" na data ${aulaData.data} (${turnoCalculado}). Não é permitido o mesmo ambiente com duas turmas.`;
-        alert(msg);
+        avisar(msg, 'info');
         throw new Error(msg);
       }
 
@@ -1157,7 +1158,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const clearAulas = async () => {
-    if (confirm("Limpar todas as aulas do cronograma?")) {
+    if (await confirmar("Apagar todas as aulas de hoje em diante?", { texto: "O painel das TVs fica vazio até uma nova planilha ser importada. O histórico de dias anteriores é mantido. Não dá para desfazer.", perigo: true, confirmar: "Apagar cronograma" })) {
+        const hojeIso = dataLocal();
         const aulasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
         const currentDocs = await getDocs(aulasCollectionRef);
         const CHUNK_SIZE = 490;
@@ -1166,6 +1168,8 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         let deleteCount = 0;
         
         currentDocs.forEach((d) => {
+            // O histórico (dias anteriores) nunca é apagado por aqui.
+            if (dataISO((d.data() as Aula).data) < hojeIso) return;
             deleteBatch.delete(d.ref);
             deleteCount++;
             if (deleteCount === CHUNK_SIZE) {
@@ -1216,7 +1220,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
   };
 
   const clearAulasHistory = async () => {
-    if (confirm("Tem certeza que deseja apagar o histórico de aulas com mais de 3 meses de antiguidade?")) {
+    if (await confirmar("Apagar o histórico com mais de 3 meses?", { texto: "As aulas mais recentes são mantidas. Não dá para desfazer.", perigo: true, confirmar: "Apagar histórico antigo" })) {
         const aulasCollectionRef = collection(db, FIRESTORE_ROOT_COLLECTION, FIRESTORE_DATA_DOCUMENT, 'aulas');
         const currentDocs = await getDocs(aulasCollectionRef);
         const CHUNK_SIZE = 490;
@@ -1249,7 +1253,7 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         await setDoc(metaDocRef, { updatedAt: serverTimestamp(), timestamp: Date.now() }, { merge: true });
 
         await registrarLog('LIMPAR_HISTORICO', 'aulas', 'todas', 'Histórico de aulas com mais de 3 meses foi removido');
-        alert("Histórico antigo limpo com sucesso!");
+        avisar("Histórico antigo limpo com sucesso!", 'sucesso');
     }
   };
 

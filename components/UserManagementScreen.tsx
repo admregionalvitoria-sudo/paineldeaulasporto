@@ -1,3 +1,4 @@
+import { avisar, confirmar } from './ui/Dialogos';
 import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot, doc, updateDoc } from 'firebase/firestore';
 import { db, auth } from '../firebase';
@@ -20,7 +21,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
   const [nome, setNome] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [role, setRole] = useState<UserRole>('admin');
+  const [role, setRole] = useState<UserRole>('coordenador');
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
 
@@ -116,15 +117,15 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
   const handleDeleteUser = async (user: UserProfile) => {
     const isMaster = user.role === 'super_admin';
     if (isMaster) {
-      alert('A conta de administrador mestre não pode ser excluída.');
+      avisar('A conta de administrador mestre não pode ser excluída.', 'erro');
       return;
     }
     if (user.uid === usuarioAtual?.uid) {
-      alert('Você não pode excluir sua própria conta enquanto estiver conectado com ela.');
+      avisar('Você não pode excluir sua própria conta enquanto estiver conectado com ela.', 'erro');
       return;
     }
 
-    if (!window.confirm(`Tem certeza que deseja excluir o usuário "${user.nome || user.email}"? Esta ação removerá o acesso permanentemente.`)) {
+    if (!(await confirmar(`Excluir o usuário ${user.nome || user.email}?`, { texto: "A pessoa perde o acesso à gestão. Não dá para desfazer.", perigo: true, confirmar: "Excluir usuário" }))) {
       return;
     }
 
@@ -150,7 +151,7 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
         ativo: !user.ativo
       });
     } catch (err: any) {
-      alert('Erro ao alterar status: ' + err.message);
+      avisar('Erro ao alterar status: ' + err.message, 'erro');
     }
   };
 
@@ -264,9 +265,9 @@ const UserManagementScreen: React.FC<UserManagementScreenProps> = ({ onBack }) =
                 onChange={(e) => setRole(e.target.value as UserRole)}
                 className="w-full bg-[#F8FAFC] border border-[#E5E7EB] p-3 rounded-xl text-xs outline-none focus:border-[#F4901E] text-[#0F2A52] font-semibold"
               >
-                <option value="admin">Administrador Geral (Acesso Total)</option>
-                <option value="coordenador">Coordenador Pedagógico (Horários e Salas)</option>
-                <option value="comunicacao">Comunicação / Mídia (Apenas TV)</option>
+                <option value="admin">Administrador (acesso total)</option>
+                <option value="coordenador">Coordenador pedagógico (horários, salas e reservas)</option>
+                <option value="comunicacao">Comunicação (só mídias das TVs)</option>
               </select>
             </div>
 

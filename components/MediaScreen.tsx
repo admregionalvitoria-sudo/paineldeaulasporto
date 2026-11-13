@@ -1,3 +1,4 @@
+import { avisar, confirmar } from './ui/Dialogos';
 import AgendaPorto from './AgendaPorto';
 import React, { useState, useContext, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
@@ -91,7 +92,7 @@ const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
     if (!files || files.length === 0) return;
 
     if (isAtLimit) {
-      alert(`O carrossel já atingiu o limite máximo de ${MAX_MEDIAS} mídias.`);
+      avisar(`O carrossel já atingiu o limite máximo de ${MAX_MEDIAS} mídias.`, 'erro');
       return;
     }
 
@@ -110,7 +111,7 @@ const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
         const MAX_VIDEO_SIZE = 50 * 1024 * 1024; // 50MB
         if (isVid && file.size > MAX_VIDEO_SIZE) {
           const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
-          alert(`O vídeo "${file.name}" tem ${sizeMB}MB e excede o limite máximo de 50MB.`);
+          avisar(`O vídeo "${file.name}" tem ${sizeMB}MB e excede o limite máximo de 50MB.`, 'erro');
           continue;
         }
 
@@ -133,7 +134,7 @@ const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
       }
     } catch (err: any) {
       console.error("Erro ao enviar mídias:", err);
-      alert("Erro ao salvar mídias: " + (err.message || 'Erro desconhecido'));
+      avisar("Erro ao salvar mídias: " + (err.message || 'Erro desconhecido'), 'erro');
     } finally {
       setUploading(false);
       setUploadStatus(null);
@@ -147,7 +148,7 @@ const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
     if (!rawUrl) return;
 
     if (isAtLimit) {
-      alert(`Limite de ${MAX_MEDIAS} mídias atingido.`);
+      avisar(`Limite de ${MAX_MEDIAS} mídias atingido.`, 'erro');
       return;
     }
 
@@ -168,12 +169,12 @@ const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
       setUrlInput('');
       setNameInput('');
     } catch (err: any) {
-      alert("Erro ao cadastrar link: " + (err.message || 'Erro desconhecido'));
+      avisar("Erro ao cadastrar link: " + (err.message || 'Erro desconhecido'), 'erro');
     }
   };
 
   const handleDelete = async (id: string, path?: string) => {
-    if (!confirm("Excluir esta mídia do carrossel da TV?")) return;
+    if (!(await confirmar("Excluir esta mídia do carrossel da TV?", { perigo: true, confirmar: "Excluir mídia" }))) return;
     await context.deleteAnuncio(id, path);
   };
 
@@ -188,7 +189,7 @@ const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
       const uploaded = await context.uploadMediaFile(file);
       setClientVideoSrc(uploaded.src);
     } catch (err: any) {
-      alert("Erro ao enviar vídeo: " + (err.message || ''));
+      avisar("Erro ao enviar vídeo: " + (err.message || ''), 'erro');
     } finally {
       setUploading(false);
       setUploadStatus(null);
@@ -214,7 +215,7 @@ const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
         }
       ]);
     } catch (err: any) {
-      alert("Erro ao enviar banner: " + (err.message || ''));
+      avisar("Erro ao enviar banner: " + (err.message || ''), 'erro');
     } finally {
       setUploading(false);
       setUploadStatus(null);
@@ -236,8 +237,8 @@ const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
     setClientBannerUrlInput('');
   };
 
-  const handleRemoveClientSlide = (index: number) => {
-    if (!confirm("Remover este banner vertical do carrossel?")) return;
+  const handleRemoveClientSlide = async (index: number) => {
+    if (!(await confirmar("Remover este banner do carrossel?", { perigo: true, confirmar: "Remover banner" }))) return;
     setClientSlides(prev => prev.filter((_, i) => i !== index));
   };
 
@@ -260,7 +261,7 @@ const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
         setTimeout(() => setClienteSavedNotice(false), 4000);
       }
     } catch (err: any) {
-      alert("Erro ao salvar configurações: " + (err.message || ''));
+      avisar("Erro ao salvar configurações: " + (err.message || ''), 'erro');
     } finally {
       setSavingCliente(false);
     }
@@ -426,8 +427,8 @@ const MediaScreen: React.FC<MediaScreenProps> = ({ onBack }) => {
               </div>
               {anuncios.length > 0 && (
                 <button
-                  onClick={() => {
-                    if (confirm("Deseja realmente limpar todas as mídias do carrossel?")) {
+                  onClick={async () => {
+                    if (await confirmar("Limpar todas as mídias do carrossel?", { texto: "As TVs deixam de exibir os anúncios até novas mídias serem enviadas.", perigo: true, confirmar: "Limpar mídias" })) {
                       context.clearAllAnuncios();
                     }
                   }}

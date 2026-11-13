@@ -1,3 +1,4 @@
+import { avisar, confirmar } from './ui/Dialogos';
 import React, { useState, useContext } from 'react';
 import { DataContext, ExtendedDataContextType } from '../context/DataContext';
 import { useAuth } from '../context/AuthContext';
@@ -18,7 +19,7 @@ export default function AlertasManagementSection({ hideForm = false }: { hideFor
       await context.criarAlerta(novoAlerta);
       setNovoAlerta('');
     } catch (err) {
-      alert("Erro ao enviar o alerta.");
+      avisar("Erro ao enviar o alerta.", 'erro');
     }
   };
 

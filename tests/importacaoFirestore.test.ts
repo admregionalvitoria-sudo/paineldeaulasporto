@@ -46,13 +46,16 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 describe('gravação de aulas e importação', () => {
   it('protege histórico/ajustes e registra IMPORTAR_CSV com os argumentos corretos', async () => {
     dadosAtuais([aula({ id: 'historico', data: '10/11/2026' }), aula({ id: 'ajuste', modificadoManualmente: true }), aula({ id: 'substituir', sala: 'Biblioteca' })]);
+    // Sem a interface montada, o aviso do sistema cai no console.
+    const aviso = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await sessao().updateAulasFromCSV([aula(), aula({ sala: 'Biblioteca' })]);
     expect(firestore.excluir.mock.calls.map(([ref]) => ref.id)).toEqual(['substituir']);
     expect(firestore.inserir).toHaveBeenCalledTimes(1);
     expect(firestore.inserir.mock.calls[0][1]).toMatchObject({ sala: 'Biblioteca', origem: 'csv', modificadoManualmente: false });
     const log = firestore.addDoc.mock.calls.find(([ref]) => ref.path.endsWith('/logs'))?.[1];
     expect(log).toMatchObject({ acao: 'IMPORTAR_CSV', entidadeTipo: 'csv', entidadeId: 'Importacao CSV' });
-    expect(alert).toHaveBeenCalledWith(expect.stringContaining('1 aulas com ajustes manuais preservadas'));
+    expect(aviso).toHaveBeenCalledWith(expect.stringContaining('1 aulas com ajustes manuais preservadas'));
+    aviso.mockRestore();
   });
 
   it('uploadCSV passa pela mesma proteção e registra o nome original do arquivo', async () => {
